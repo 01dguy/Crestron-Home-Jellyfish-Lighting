@@ -1,37 +1,20 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace Home_Extension_Template
+﻿namespace JellyfishLighting.ExtensionDriver
 {
 	public class Settings_Data
 	{
-		#region Declarations
-		public bool Checkbox_Setting;
-		public int Text_Entry_Setting;
-		#endregion Declarations
+		public bool UseSsl;
+		public int PollIntervalSeconds;
 
-		//****************************************************************************************
-		// 
-		//  Settings_Data	-   Constructor
-		// 
-		//****************************************************************************************
 		public Settings_Data()
 		{
-			Checkbox_Setting = false;
-			Text_Entry_Setting = 0;
+			UseSsl = true;
+			PollIntervalSeconds = 60;
 		}
-		//****************************************************************************************
-		// 
-		//  Save	-   
-		// 
-		//****************************************************************************************
-		public void Save(bool Checkbox_Setting, int Text_Entry_Setting)
+
+		public void Save(bool useSsl, int pollIntervalSeconds)
 		{
-			this.Checkbox_Setting = Checkbox_Setting;
-			this.Text_Entry_Setting = Text_Entry_Setting;
+			UseSsl = useSsl;
+			PollIntervalSeconds = pollIntervalSeconds < 10 ? 10 : pollIntervalSeconds;
 		}
 	}
 }

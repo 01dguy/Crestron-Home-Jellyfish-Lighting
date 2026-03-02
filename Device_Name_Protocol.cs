@@ -1,176 +1,452 @@
 ﻿using System;
+using System.Text.RegularExpressions;
 using Crestron.RAD.Common.BasicDriver;
 
-namespace Home_Extension_Template
+namespace JellyfishLighting.ExtensionDriver
 {
 	public class Device_Name_Protocol : ABaseDriverProtocol, IDisposable
 	{
-		#region Declarations
 		private readonly Device_Name Device;
-		public Device_Name.UI_Update_Delegate UI_Update;
-		#endregion Declarations
+		private readonly Device_Name_Transport TransportLayer;
 
-		//****************************************************************************************
-		// 
-		//  Device_Name_Protocol	-	Constructor
-		// 
-		//****************************************************************************************
+		public Device_Name.UiUpdateDelegate UI_Update;
+
+		public string LastStatus = "Disconnected";
+		public bool LastOnlineState;
+		public string LastScene = "Unknown";
+		public int LastBrightness;
+		public string LastZoneSummary = "Unknown";
+
+		private string ControllerHost = string.Empty;
+		private int ControllerPort = 80;
+
+		private string LastPatternFile = string.Empty;
+		private string[] LastZoneNames = new string[0];
+
 		public Device_Name_Protocol(Device_Name_Transport transport, byte id) : base(transport, id)
 		{
-			#region Debug Message
-			Log("Device_Name_Protocol - Constructor - Start");
-			#endregion Debug Message
-
 			Transport = transport;
+			TransportLayer = transport;
 			Device = transport.Device;
-
-			#region Debug Message
-			Log("Device_Name_Protocol - Constructor - Finish");
-			#endregion Debug Message
 		}
 
-		//****************************************************************************************
-		// 
-		//  Start	-	
-		// 
-		//****************************************************************************************
 		public void Start()
 		{
-			#region Debug Message
-			Log("Device_Name_Protocol - Start - Start");
-			#endregion Debug Message
-
-			PollingInterval = 60000;//60 seconds in ms
+			UpdatePollingInterval(Device.Settings.PollIntervalSeconds);
 			EnableAutoPolling = true;
+			ApplyTransportConfiguration();
+			TransportLayer.Start();
 
-			#region Debug Message
-			Log("Device_Name_Protocol - Start - Finish");
-			#endregion Debug Message
-		}
-
-		//****************************************************************************************
-		// 
-		//  Stop	-	
-		// 
-		//****************************************************************************************
-		public void Stop()
-		{
-			#region Debug Message
-			Log("Device_Name_Protocol - Stop - Start");
-			#endregion Debug Message
-
-			EnableAutoPolling = false;
-
-			#region Debug Message
-			Log("Device_Name_Protocol - Stop - Finish");
-			#endregion Debug Message
-		}
-
-		//****************************************************************************************
-		// 
-		//  Poll	-	Built in Polling Routing
-		// 
-		//****************************************************************************************
-		protected override void Poll()
-		{
-			#region Debug Message
-			Log("Device_Name_Protocol - Poll - Start");
-			#endregion Debug Message
-
-			//TODO Do the work to get data from your device/cloud service
-
-			#region Test Code
-			// Increment the counter so there is something to watch in the UI
-			// When the counter gets to 10 trigger an event
-			Device.Counter++;
-			if (Device.Counter >= 11)
-			{ 
-				Device.Counter = 1;
-			}
-			else if (Device.Counter == 10)
+			if (TransportLayer.IsSocketConnected)
 			{
-				Device.Trigger_Event();
-			}
-
-			#region Debug Message
-			Log("Device_Name_Protocol - Poll Counter = " + Device.Counter.ToString());
-			#endregion Debug Message
-			#endregion Test Code
-
-			//Update your UI with the information
-			UI_Update();
-
-			#region Debug Message
-			Log("Device_Name_Protocol - Poll - Finish");
-			#endregion Debug Message
-		}
-
-		#region Overrides
-		//****************************************************************************************
-		// 
-		//  ConnectionChangedEvent	-	
-		// 
-		//****************************************************************************************
-		protected override void ConnectionChangedEvent(bool connection)
-		{
-			#region Debug Message
-			Log("Device_Name_Protocol - ConnectionChangedEvent - Start");
-			#endregion Debug Message
-
-			#region Debug Message
-			Log("Device_Name_Protocol - ConnectionChangedEvent - Finish");
-			#endregion Debug Message
-		}
-
-		//****************************************************************************************
-		// 
-		//  ChooseDeconstructMethod	-	
-		// 
-		//****************************************************************************************
-		protected override void ChooseDeconstructMethod(ValidatedRxData validatedData)
-		{
-			#region Debug Message
-			Log("Device_Name_Protocol - ChooseDeconstructMethod - Start");
-			#endregion Debug Message
-
-			#region Debug Message
-			Log("Device_Name_Protocol - ChooseDeconstructMethod - Finish");
-			#endregion Debug Message
-		}
-
-		//****************************************************************************************
-		// 
-		//  SetUserAttribute	-	
-		// 
-		//****************************************************************************************
-		public override void SetUserAttribute(string attributeId, string attributeValue)
-		{
-			#region Debug Message
-			Log("Device_Name_Protocol - SetUserAttribute - Start");
-			#endregion Debug Message
-
-			if (string.IsNullOrEmpty(attributeValue))
-			{
-				Log("Device_Name_Protocol - SetUserAttribute - User attribute value was null or empty");
+				LastStatus = "Connected (WebSocket scaffold)";
+				LastOnlineState = true;
+				PollNow();
 			}
 			else
 			{
-				switch (attributeId)
+				LastStatus = "Disconnected: " + TransportLayer.LastTransportError;
+				LastOnlineState = false;
+				UI_Update?.Invoke();
+			}
+		}
+
+		public void Stop()
+		{
+			EnableAutoPolling = false;
+			TransportLayer.Stop();
+			LastStatus = "Disconnected";
+			LastOnlineState = false;
+			UI_Update?.Invoke();
+		}
+
+		public void PollNow()
+		{
+			Poll();
+		}
+
+		public void UpdatePollingInterval(int pollIntervalSeconds)
+		{
+			if (pollIntervalSeconds < 10)
+			{
+				pollIntervalSeconds = 10;
+			}
+			PollingInterval = pollIntervalSeconds * 1000;
+		}
+
+		public void SetPowerState(int state)
+		{
+			if (state != 0 && state != 1)
+			{
+				LastStatus = "Invalid power state. Use 0 or 1.";
+				UI_Update?.Invoke();
+				return;
+			}
+
+			if (string.IsNullOrEmpty(LastPatternFile) || LastZoneNames == null || LastZoneNames.Length == 0)
+			{
+				LastStatus = "Power command requires a previously selected pattern and zones.";
+				UI_Update?.Invoke();
+				return;
+			}
+
+			TransportLayer.SendJson(BuildRunPatternBasicCommand(LastPatternFile, LastZoneNames, state));
+			LastStatus = state == 1 ? "Power on command sent" : "Power off command sent";
+			UI_Update?.Invoke();
+		}
+
+		protected override void Poll()
+		{
+			if (!TransportLayer.IsSocketConnected)
+			{
+				LastStatus = "WebSocket not connected";
+				LastOnlineState = false;
+				UI_Update?.Invoke();
+				return;
+			}
+
+			TransportLayer.SendJson(BuildGetPatternListCommand());
+			TransportLayer.SendJson(BuildGetZoneListCommand());
+			LastStatus = "Polling: requested patternFileList + zones";
+			UI_Update?.Invoke();
+		}
+
+		public void RequestPatternFileData(string folder, string patternName)
+		{
+			if (string.IsNullOrEmpty(folder) || string.IsNullOrEmpty(patternName))
+			{
+				LastStatus = "Pattern file data requires folder and pattern name.";
+				UI_Update?.Invoke();
+				return;
+			}
+
+			TransportLayer.SendJson(BuildGetPatternFileDataCommand(folder, patternName));
+			LastStatus = "Requested pattern file data.";
+			UI_Update?.Invoke();
+		}
+
+		public void RunPattern(string filePath, string[] zoneNames, int state)
+		{
+			if (!IsValidBasicRunPatternRequest(filePath, zoneNames, state))
+			{
+				LastStatus = "RunPattern basic requires file, state (0/1), and at least one zone.";
+				UI_Update?.Invoke();
+				return;
+			}
+
+			LastPatternFile = filePath;
+			LastZoneNames = zoneNames;
+			TransportLayer.SendJson(BuildRunPatternBasicCommand(filePath, zoneNames, state));
+			LastStatus = "RunPattern basic command sent";
+			UI_Update?.Invoke();
+		}
+
+		public void ApplyAdvancedPatternData(string dataJson, string[] zoneNames, int state)
+		{
+			string validationError;
+			if (!ValidateAdvancedPatternData(dataJson, zoneNames, state, out validationError))
+			{
+				LastStatus = "Advanced pattern validation failed: " + validationError;
+				UI_Update?.Invoke();
+				return;
+			}
+
+			LastZoneNames = zoneNames;
+			TransportLayer.SendJson(BuildRunPatternAdvancedCommand(dataJson, zoneNames, state));
+			LastStatus = "RunPattern advanced command sent";
+			UI_Update?.Invoke();
+		}
+
+		public void HandleInboundWebSocketJson(string json)
+		{
+			if (string.IsNullOrEmpty(json) || json.IndexOf("\"cmd\":\"fromCtlr\"", StringComparison.OrdinalIgnoreCase) < 0)
+			{
+				return;
+			}
+
+			var previousScene = LastScene;
+
+			if (json.IndexOf("\"runPattern\"", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				var runPatternFile = ExtractString(json, "file");
+				if (!string.IsNullOrEmpty(runPatternFile))
 				{
-					case "DeviceID":
-						Device.Device_ID = attributeValue;
-						#region Debug Message
-						Log("Device_Name_Protocol - SetUserAttribute - Device ID has been set:" + attributeValue);
-						#endregion Debug Message
-						break;
+					LastScene = runPatternFile;
+					LastPatternFile = runPatternFile;
 				}
 			}
 
-			#region Debug Message
-			Log("Device_Name_Protocol - SetUserAttribute - Finish");
-			#endregion Debug Message
-		}
-		#endregion Overrides
+			var brightness = ExtractInt(json, "brightness");
+			if (brightness != null)
+			{
+				LastBrightness = (int)brightness;
+			}
 
+			if (json.IndexOf("\"patternFileList\"", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				var patternCount = Regex.Matches(json, "\\\"readOnly\\\"").Count;
+				LastStatus = "Pattern list received";
+				LastZoneSummary = string.Format("Patterns: {0}", patternCount);
+			}
+
+			if (json.IndexOf("\"zones\"", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				var zoneCount = Regex.Matches(json, "\\\"numPixels\\\"").Count;
+				LastZoneSummary = string.Format("Zones: {0}", zoneCount);
+			}
+
+			if (json.IndexOf("\"patternFileData\"", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				LastStatus = "Pattern file data received";
+			}
+
+			LastOnlineState = true;
+			if (string.IsNullOrEmpty(LastStatus) || LastStatus == "Disconnected")
+			{
+				LastStatus = "fromCtlr update received";
+			}
+
+			if (!string.Equals(previousScene, LastScene, StringComparison.OrdinalIgnoreCase))
+			{
+				Device.TriggerSceneUpdatedEvent();
+			}
+
+			UI_Update?.Invoke();
+		}
+
+		public static string BuildGetPatternListCommand()
+		{
+			return "{\"cmd\":\"toCtlrGet\",\"get\":[[\"patternFileList\"]]}";
+		}
+
+		public static string BuildGetZoneListCommand()
+		{
+			return "{\"cmd\":\"toCtlrGet\",\"get\":[[\"zones\"]]}";
+		}
+
+		public static string BuildGetPatternFileDataCommand(string folder, string fileName)
+		{
+			return string.Format("{{\"cmd\":\"toCtlrGet\",\"get\":[[\"patternFileData\",\"{0}\",\"{1}\"]]}}", Escape(folder), Escape(fileName));
+		}
+
+		public static string BuildRunPatternBasicCommand(string filePath, string[] zoneNames, int state)
+		{
+			var zones = BuildZoneArray(zoneNames);
+			return string.Format("{{\"cmd\":\"toCtlrSet\",\"runPattern\":{{\"file\":\"{0}\",\"data\":\"\",\"id\":\"\",\"state\":{1},\"zoneName\":[{2}]}}}}", Escape(filePath), state, zones);
+		}
+
+		public static string BuildRunPatternAdvancedCommand(string dataJson, string[] zoneNames, int state)
+		{
+			var zones = BuildZoneArray(zoneNames);
+			var escapedData = Escape(dataJson);
+			return string.Format("{{\"cmd\":\"toCtlrSet\",\"runPattern\":{{\"file\":\"\",\"data\":\"{0}\",\"id\":\"\",\"state\":{1},\"zoneName\":[{2}]}}}}", escapedData, state, zones);
+		}
+
+		public static string BuildAdvancedPatternDataJson(
+			int[] colors,
+			int spaceBetweenPixels,
+			string effectBetweenPixels,
+			string type,
+			int skip,
+			int numOfLeds,
+			int speed,
+			int brightness,
+			string direction)
+		{
+			var colorsPayload = colors == null ? string.Empty : string.Join(",", colors);
+			return string.Format("{{\"colors\":[{0}],\"spaceBetweenPixels\":{1},\"effectBetweenPixels\":\"{2}\",\"type\":\"{3}\",\"skip\":{4},\"numOfLeds\":{5},\"runData\":{{\"speed\":{6},\"brightness\":{7},\"effect\":\"No Effect\",\"effectValue\":0,\"rgbAdj\":[100,100,100]}},\"direction\":\"{8}\"}}",
+				colorsPayload,
+				spaceBetweenPixels,
+				Escape(effectBetweenPixels),
+				Escape(type),
+				skip,
+				numOfLeds,
+				speed,
+				brightness,
+				Escape(direction));
+		}
+
+		private static bool IsValidBasicRunPatternRequest(string filePath, string[] zoneNames, int state)
+		{
+			return !string.IsNullOrEmpty(filePath)
+				&& zoneNames != null
+				&& zoneNames.Length > 0
+				&& (state == 0 || state == 1);
+		}
+
+		private static bool ValidateAdvancedPatternData(string dataJson, string[] zoneNames, int state, out string error)
+		{
+			error = string.Empty;
+			if (string.IsNullOrEmpty(dataJson))
+			{
+				error = "data JSON is required";
+				return false;
+			}
+
+			if (zoneNames == null || zoneNames.Length == 0)
+			{
+				error = "at least one zone is required";
+				return false;
+			}
+
+			if (state != 0 && state != 1)
+			{
+				error = "state must be 0 or 1";
+				return false;
+			}
+
+			if (!ContainsKey(dataJson, "colors") || !ContainsKey(dataJson, "spaceBetweenPixels") || !ContainsKey(dataJson, "effectBetweenPixels") ||
+				!ContainsKey(dataJson, "type") || !ContainsKey(dataJson, "skip") || !ContainsKey(dataJson, "numOfLeds") ||
+				!ContainsKey(dataJson, "runData") || !ContainsKey(dataJson, "direction"))
+			{
+				error = "one or more required advanced data fields are missing";
+				return false;
+			}
+
+			if (!ContainsKey(dataJson, "speed") || !ContainsKey(dataJson, "brightness") || !ContainsKey(dataJson, "effect") || !ContainsKey(dataJson, "effectValue") || !ContainsKey(dataJson, "rgbAdj"))
+			{
+				error = "runData fields are incomplete";
+				return false;
+			}
+
+			var effectValue = ExtractString(dataJson, "effect");
+			if (!string.Equals(effectValue, "No Effect", StringComparison.OrdinalIgnoreCase))
+			{
+				error = "runData.effect must be 'No Effect'";
+				return false;
+			}
+
+			var effectValueInt = ExtractInt(dataJson, "effectValue");
+			if (effectValueInt == null || effectValueInt != 0)
+			{
+				error = "runData.effectValue must be 0";
+				return false;
+			}
+
+			if (dataJson.IndexOf("\"rgbAdj\":[100,100,100]", StringComparison.OrdinalIgnoreCase) < 0)
+			{
+				error = "runData.rgbAdj must be [100,100,100]";
+				return false;
+			}
+
+			var brightness = ExtractInt(dataJson, "brightness");
+			if (brightness == null || brightness < 0 || brightness > 100)
+			{
+				error = "runData.brightness must be between 0 and 100";
+				return false;
+			}
+
+			var colorsMatch = Regex.Match(dataJson, "\\\"colors\\\"\\s*:\\s*\\[(?<values>[^\\]]*)\\]", RegexOptions.IgnoreCase);
+			if (!colorsMatch.Success)
+			{
+				error = "colors array is missing";
+				return false;
+			}
+
+			var rawColors = colorsMatch.Groups["values"].Value;
+			if (string.IsNullOrEmpty(rawColors))
+			{
+				error = "colors cannot be empty";
+				return false;
+			}
+
+			var values = rawColors.Split(',');
+			if (values.Length % 3 != 0 || values.Length > 90)
+			{
+				error = "colors length must be a multiple of 3 and <= 90";
+				return false;
+			}
+
+			for (var i = 0; i < values.Length; i++)
+			{
+				int colorValue;
+				if (!int.TryParse(values[i].Trim(), out colorValue) || colorValue < 0 || colorValue > 255)
+				{
+					error = "each colors value must be between 0 and 255";
+					return false;
+				}
+			}
+
+			return true;
+		}
+
+		private static bool ContainsKey(string json, string key)
+		{
+			return json.IndexOf("\"" + key + "\"", StringComparison.OrdinalIgnoreCase) >= 0;
+		}
+
+		private static string BuildZoneArray(string[] zoneNames)
+		{
+			if (zoneNames == null || zoneNames.Length == 0)
+			{
+				return string.Empty;
+			}
+
+			var parts = new string[zoneNames.Length];
+			for (var i = 0; i < zoneNames.Length; i++)
+			{
+				parts[i] = "\"" + Escape(zoneNames[i]) + "\"";
+			}
+
+			return string.Join(",", parts);
+		}
+
+		private static string Escape(string value)
+		{
+			return string.IsNullOrEmpty(value) ? string.Empty : value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+		}
+
+		private static string ExtractString(string json, string key)
+		{
+			var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*\\\"(?<v>[^\\\"]*)\\\"", RegexOptions.IgnoreCase);
+			return match.Success ? match.Groups["v"].Value : null;
+		}
+
+		private static int? ExtractInt(string json, string key)
+		{
+			var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*(?<v>-?\\d+)", RegexOptions.IgnoreCase);
+			if (!match.Success)
+			{
+				return null;
+			}
+
+			int value;
+			return int.TryParse(match.Groups["v"].Value, out value) ? value : (int?)null;
+		}
+
+		private static int ToPort(string value)
+		{
+			int parsed;
+			return int.TryParse(value, out parsed) && parsed > 0 ? parsed : 80;
+		}
+
+		private void ApplyTransportConfiguration()
+		{
+			TransportLayer.Configure(ControllerHost, ControllerPort, Device.Settings.UseSsl);
+		}
+
+		protected override void ConnectionChangedEvent(bool connection)
+		{
+			Log("JellyfishLighting - Connection changed: " + connection);
+		}
+
+		protected override void ChooseDeconstructMethod(ValidatedRxData validatedData)
+		{
+		}
+
+		public override void SetUserAttribute(string attributeId, string attributeValue)
+		{
+			switch (attributeId)
+			{
+				case "ControllerHost":
+					ControllerHost = attributeValue ?? string.Empty;
+					break;
+				case "ControllerPort":
+					ControllerPort = ToPort(attributeValue);
+					break;
+			}
+
+			ApplyTransportConfiguration();
+		}
 	}
 }

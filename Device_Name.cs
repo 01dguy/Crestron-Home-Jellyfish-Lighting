@@ -1,416 +1,231 @@
 ﻿using System;
+using Crestron.RAD.Common.Attributes.Programming;
+using Crestron.RAD.Common.Enums;
 using Crestron.RAD.Common.Interfaces;
 using Crestron.RAD.Common.Interfaces.ExtensionDevice;
 using Crestron.RAD.DeviceTypes.ExtensionDevice;
-using Crestron.RAD.Common.Attributes.Programming;
-using Crestron.RAD.Common.Enums;
 
-
-namespace Home_Extension_Template
+namespace JellyfishLighting.ExtensionDriver
 {
-
 	public class Device_Name : AExtensionDevice, ICloudConnected
 	{
-		#region Declarations
 		public Device_Name_Transport Transport;
 		public Device_Name_Protocol Protocol;
-		public string Device_ID;
-		public int Counter = 1;
-
-		//Settings
 		public Settings_Data Settings;
-		private const string Filename = "Template_Settings_Data";
-		#endregion Declarations
+		private const string Filename = "JellyfishLightingSettings";
 
-		#region Property keys
-		private const string Display_Text_Key = "DisplayText";
-		private const string Checkbox_Value_Key = "CheckboxValue";
-		private const string Text_Entry_Value_Key = "TextEntryValue";
-		#endregion Property keys
+		private const string StatusTextKey = "StatusText";
+		private const string IsOnlineKey = "IsOnline";
+		private const string ActiveSceneKey = "ActiveScene";
+		private const string BrightnessKey = "Brightness";
+		private const string ZoneSummaryKey = "ZoneSummary";
+		private const string UseSslKey = "UseSsl";
+		private const string PollIntervalSecondsKey = "PollIntervalSeconds";
 
-		#region UI properties
-		private PropertyValue<string> Display_Text_Property;
-		private PropertyValue<bool> Checkbox_Value_Property;
-		private PropertyValue<int> Text_Entry_Value_Property;
-		#endregion UI properties
+		private PropertyValue<string> StatusTextProperty;
+		private PropertyValue<bool> IsOnlineProperty;
+		private PropertyValue<string> ActiveSceneProperty;
+		private PropertyValue<int> BrightnessProperty;
+		private PropertyValue<string> ZoneSummaryProperty;
+		private PropertyValue<bool> UseSslProperty;
+		private PropertyValue<int> PollIntervalSecondsProperty;
 
-		#region Events
 		[ProgrammableEvent]
-		public event EventHandler Event_ID;
-		#endregion Events
+		public event EventHandler SceneUpdated;
 
-		#region Delegates
-		public delegate void UI_Update_Delegate();
-		#endregion Delegates
+		public delegate void UiUpdateDelegate();
 
-		//****************************************************************************************
-		// 
-		//  Device_Name	-   Constructor
-		// 
-		//****************************************************************************************
 		public Device_Name()
 		{
-			#region Debug Message
-			Log("Device_Name - Constructor - Start");
-			#endregion Debug Message
-
-			#region Debug Message
-			Log("Device_Name - Constructor - Finish");
-			#endregion Debug Message
+			Settings = new Settings_Data();
 		}
 
-		//****************************************************************************************
-		// 
-		//  Initialize	-  ICloudConnected Interface
-		// 
-		//****************************************************************************************
 		public void Initialize()
 		{
 			EnableLogging = true;
+			CreateDeviceDefinition();
 
-			#region Debug Message
-			Log("Device_Name - Initialize - Start");
-			#endregion Debug Message
-
-			#region Setup Delegates
-			UI_Update_Delegate del = new UI_Update_Delegate(Update_UI);
-			#endregion Setup Delegates
-
-			#region Setup UI
-			Create_Device_Definition();
-			#endregion Setup UI
-
-			#region Setup Transport
-			try
+			var uiUpdate = new UiUpdateDelegate(Update_UI);
+			Transport = new Device_Name_Transport(this)
 			{
-				Transport = new Device_Name_Transport(this)
-				{
-					EnableLogging = InternalEnableLogging,
-					CustomLogger = InternalCustomLogger,
-					EnableRxDebug = InternalEnableRxDebug,
-					EnableTxDebug = InternalEnableTxDebug
-				};
-				ConnectionTransport = Transport;
-			}
-			catch (Exception e)
-			{
-				string err = "Device_Name - Initialize - Error Setting Up Transport: " + e;
-				#region Debug Message
-				Log(err);
-				#endregion Debug Message
-				Crestron.SimplSharp.ErrorLog.Error(err + "\n");
-			}
-			#endregion Setup Transport
+				EnableLogging = InternalEnableLogging,
+				CustomLogger = InternalCustomLogger,
+				EnableRxDebug = InternalEnableRxDebug,
+				EnableTxDebug = InternalEnableTxDebug
+			};
+			ConnectionTransport = Transport;
 
-			#region Setup Protocol
-			try
+			Protocol = new Device_Name_Protocol(Transport, Id)
 			{
-				Protocol = new Device_Name_Protocol(Transport, Id)
-				{
-					EnableLogging = InternalEnableLogging,
-					CustomLogger = InternalCustomLogger,
-					UI_Update = del
-				};
-
-				DeviceProtocol = Protocol;
-				DeviceProtocol.Initialize(DriverData);
-			}
-			catch (Exception e)
-			{
-				string err = "Device_Name - Initialize - Error Setting Up Protocol: " + e;
-				#region Debug Message
-				Log(err);
-				#endregion Debug Message
-				Crestron.SimplSharp.ErrorLog.Error(err + "\n");
-			}
-			#endregion Setup Protocol
-
-			#region Debug Message
-			Log("Device_Name - Initialize - Finish");
-			#endregion Debug Message
+				EnableLogging = InternalEnableLogging,
+				CustomLogger = InternalCustomLogger,
+				UI_Update = uiUpdate
+			};
+			DeviceProtocol = Protocol;
+			DeviceProtocol.Initialize(DriverData);
 		}
 
-		//****************************************************************************************
-		// 
-		//  Create_Device_Definition	-   
-		// 
-		//****************************************************************************************
-		private void Create_Device_Definition()
+		private void CreateDeviceDefinition()
 		{
-			#region Debug Message
-			Log("Device_Name - Create_Device_Definition - Start");
-			#endregion Debug Message
-
-			Display_Text_Property = CreateProperty<string>(new PropertyDefinition(Display_Text_Key, null, DevicePropertyType.String));
-			Checkbox_Value_Property = CreateProperty<bool>(new PropertyDefinition(Checkbox_Value_Key, null, DevicePropertyType.Boolean));
-			Text_Entry_Value_Property = CreateProperty<int>(new PropertyDefinition(Text_Entry_Value_Key, null, DevicePropertyType.Int32));
-
-			#region Debug Message
-			Log("Device_Name - Create_Device_Definition - Finish");
-			#endregion Debug Message
+			StatusTextProperty = CreateProperty<string>(new PropertyDefinition(StatusTextKey, null, DevicePropertyType.String));
+			IsOnlineProperty = CreateProperty<bool>(new PropertyDefinition(IsOnlineKey, null, DevicePropertyType.Boolean));
+			ActiveSceneProperty = CreateProperty<string>(new PropertyDefinition(ActiveSceneKey, null, DevicePropertyType.String));
+			BrightnessProperty = CreateProperty<int>(new PropertyDefinition(BrightnessKey, null, DevicePropertyType.Int32));
+			ZoneSummaryProperty = CreateProperty<string>(new PropertyDefinition(ZoneSummaryKey, null, DevicePropertyType.String));
+			UseSslProperty = CreateProperty<bool>(new PropertyDefinition(UseSslKey, null, DevicePropertyType.Boolean));
+			PollIntervalSecondsProperty = CreateProperty<int>(new PropertyDefinition(PollIntervalSecondsKey, null, DevicePropertyType.Int32));
+			Commit();
 		}
 
-		//****************************************************************************************
-		// 
-		//  Update_UI	-   
-		// 
-		//****************************************************************************************
 		public void Update_UI()
 		{
-			#region Debug Message
-			Log("Device_Name - Update_UI - Start");
-			#endregion Debug Message
+			if (Protocol == null)
+			{
+				return;
+			}
 
-			Display_Text_Property.Value = Counter.ToString();
-
+			StatusTextProperty.Value = Protocol.LastStatus;
+			IsOnlineProperty.Value = Protocol.LastOnlineState;
+			ActiveSceneProperty.Value = Protocol.LastScene;
+			BrightnessProperty.Value = Protocol.LastBrightness;
+			ZoneSummaryProperty.Value = Protocol.LastZoneSummary;
 			Commit();
-
-			#region Debug Message
-			Log("Device_Name - Update_UI - Finish");
-			#endregion Debug Message
 		}
 
-		//****************************************************************************************
-		// 
-		//  Trigger_Event	-   
-		// 
-		//****************************************************************************************
-		public void Trigger_Event()
+		[ProgrammableOperation("^RefreshNowLabel")]
+		public void RefreshNow()
 		{
-			#region Debug Message
-			Log("Device_Name - Trigger_Event - Start");
-			#endregion Debug Message
-
-			var Event = Event_ID;
-			Event?.Invoke(this, new EventArgs());
-
-			#region Debug Message
-			Log("Device_Name - Trigger_Event - Finish");
-			#endregion Debug Message
+			Protocol?.PollNow();
 		}
 
-		//****************************************************************************************
-		// 
-		//  Sequence_Triggered_Method	-   
-		// 
-		//****************************************************************************************
-		[ProgrammableOperation("^SequenceTriggeredMethodLabel")]
-		public void Sequence_Triggered_Method()
+
+		[ProgrammableOperation("^PowerOnLabel")]
+		public void PowerOn()
 		{
-			#region Debug Message
-			Log("Device_Name - Sequence_Triggered_Method - Start");
-			#endregion Debug Message
-
-			#region Debug Message
-			Log("Device_Name - Sequence_Triggered_Method - Finish");
-			#endregion Debug Message
+			Protocol?.SetPowerState(1);
 		}
 
-		#region Overrides
-		//****************************************************************************************
-		// 
-		//  Dispose	-   
-		// 
-		//****************************************************************************************
-		public override void Dispose()
+		[ProgrammableOperation("^PowerOffLabel")]
+		public void PowerOff()
 		{
-			#region Debug Message
-			Log("Device_Name - Dispose - Start");
-			#endregion Debug Message
-
-			base.Dispose();
-
-			#region Debug Message
-			Log("Device_Name - Dispose - Finish");
-			#endregion Debug Message
+			Protocol?.SetPowerState(0);
 		}
 
-		//****************************************************************************************
-		// 
-		//  DoCommand	-   
-		// 
-		//****************************************************************************************
+		public void TriggerSceneUpdatedEvent()
+		{
+			SceneUpdated?.Invoke(this, EventArgs.Empty);
+		}
+
 		protected override IOperationResult DoCommand(string command, string[] parameters)
 		{
-			#region Debug Message
-			Log("Device_Name - DoCommand - Start");
-			#endregion Debug Message
-
 			switch (command)
 			{
 				case "ShowSettings":
-					//Load Boolean Values
-					Checkbox_Value_Property.Value = Settings.Checkbox_Setting;
-					//Load String Values
-					Text_Entry_Value_Property.Value = Settings.Text_Entry_Setting;
+					UseSslProperty.Value = Settings.UseSsl;
+					PollIntervalSecondsProperty.Value = Settings.PollIntervalSeconds;
 					break;
-
 				case "SaveSettings":
-					Settings.Save(Checkbox_Value_Property.Value, Text_Entry_Value_Property.Value);
-					//Make Settings Persistant
+					Settings.Save(UseSslProperty.Value, PollIntervalSecondsProperty.Value);
 					SaveSetting(Filename, Settings);
+					Protocol?.UpdatePollingInterval(Settings.PollIntervalSeconds);
+					break;
+				case "RefreshNow":
+					Protocol?.PollNow();
+					break;
+				case "GetPatternsAndZones":
+					Protocol?.PollNow();
+					break;
+				case "PowerOn":
+					Protocol?.SetPowerState(1);
+					break;
+				case "PowerOff":
+					Protocol?.SetPowerState(0);
 					break;
 			}
-			
+
 			Commit();
-
-			#region Debug Message
-			Log("Device_Name - DoCommand - Finish");
-			#endregion Debug Message
-
 			return new OperationResult(OperationResultCode.Success);
 		}
 
-		//****************************************************************************************
-		// 
-		//  SetDriverPropertyValue	-   
-		// 
-		//****************************************************************************************
 		protected override IOperationResult SetDriverPropertyValue<T>(string propertyKey, T value)
 		{
-			#region Debug Message
-			Log("Device_Name - SetDriverPropertyValue 1 - Start");
-			#endregion Debug Message
-
 			switch (propertyKey)
 			{
-				case "CheckboxValue":
-					Checkbox_Value_Property.Value = value.Equals(true);
-					#region Debug Message
-					Log("Device_Name - SetDriverPropertyValue 1 - CheckboxValue= " + Checkbox_Value_Property.Value);
-					#endregion Debug Message
+				case UseSslKey:
+					UseSslProperty.Value = ToBoolean(value);
 					break;
-
-				case "TextEntryValue":
-					var TextEntryValue = value as int?;
-					if (TextEntryValue != null)
+				case PollIntervalSecondsKey:
+					var pollInterval = ToInt(value);
+					if (pollInterval != null)
 					{
-						Text_Entry_Value_Property.Value = (int)TextEntryValue;
+						PollIntervalSecondsProperty.Value = (int)pollInterval;
 					}
-					else
-					{
-						#region Debug Message
-						Log("Device_Name - SetDriverPropertyValue 1 - Couldn't Convert value to int");
-						#endregion Debug Message
-					}
-					#region Debug Message
-					Log("Device_Name - SetDriverPropertyValue 1 - TextEntryValue = " + Text_Entry_Value_Property.Value);
-					#endregion Debug Message
-					break;
-
-				default:
-					#region Debug Message
-					Log("Device_Name - SetDriverPropertyValue 1 - Unhandled PropertyKey = " + propertyKey);
-					#endregion Debug Message
 					break;
 			}
 
 			Commit();
-
-			#region Debug Message
-			Log("Device_Name - SetDriverPropertyValue 1 - Finish");
-			#endregion Debug Message
-
 			return new OperationResult(OperationResultCode.Success);
 		}
 
-		//****************************************************************************************
-		// 
-		//  SetDriverPropertyValue	-   
-		// 
-		//****************************************************************************************
 		protected override IOperationResult SetDriverPropertyValue<T>(string objectId, string propertyKey, T value)
 		{
-			#region Debug Message
-			Log("Device_Name - SetDriverPropertyValue 2 - Start");
-			#endregion Debug Message
-
 			Commit();
-
-			#region Debug Message
-			Log("Device_Name - SetDriverPropertyValue 2 - Finish");
-			#endregion Debug Message
-
 			return new OperationResult(OperationResultCode.Success);
 		}
 
-		//****************************************************************************************
-		// 
-		//  Connect	-   
-		// 
-		//****************************************************************************************
+		private static bool ToBoolean<T>(T value)
+		{
+			if (value == null)
+			{
+				return false;
+			}
+			if (value is bool)
+			{
+				return (bool)(object)value;
+			}
+			bool parsed;
+			return bool.TryParse(value.ToString(), out parsed) && parsed;
+		}
+
+		private static int? ToInt<T>(T value)
+		{
+			if (value == null)
+			{
+				return null;
+			}
+			if (value is int)
+			{
+				return (int)(object)value;
+			}
+			int parsed;
+			return int.TryParse(value.ToString(), out parsed) ? parsed : (int?)null;
+		}
+
 		public override void Connect()
 		{
-			#region Debug Message
-			Log("Device_Name - Connect - Start");
-			#endregion Debug Message
-
 			if (Protocol == null)
 			{
-				#region Debug Message
-				Log("Device_Name - Connect - Protocol was null when Connect was called");
-				#endregion Debug Message
-			}
-			else
-			{
-				#region Load Persistant Settings
-				var temp = GetSetting(Filename);
-				if (temp != null)
-				{
-					Settings = (Settings_Data)temp;
-				}
-				else
-				{
-					//No Persistant Notifications - Create From Scratch and Save for Next Time
-					Settings = new Settings_Data();
-					SaveSetting(Filename, Settings);
-				}
-				#endregion Load Persistant Notifications
-
-				base.Connect();
-
-				// Set Connected flag to true
-				Connected = true;
-
-				Protocol.Start();
+				return;
 			}
 
-			#region Debug Message
-			Log("Device_Name - Connect - Finish");
-			#endregion Debug Message
+			var temp = GetSetting(Filename);
+			Settings = temp != null ? (Settings_Data)temp : new Settings_Data();
+			SaveSetting(Filename, Settings);
+
+			UseSslProperty.Value = Settings.UseSsl;
+			PollIntervalSecondsProperty.Value = Settings.PollIntervalSeconds;
+			Commit();
+
+			base.Connect();
+			Connected = true;
+			Protocol.Start();
 		}
 
-		//****************************************************************************************
-		// 
-		//  Disconnect	-   
-		// 
-		//****************************************************************************************
 		public override void Disconnect()
 		{
-			#region Debug Message
-			Log("Device_Name - Disconnect - Start");
-			#endregion Debug Message
-
-			if (Protocol == null)
-			{
-				#region Debug Message
-				Log("Device_Name - DisconnectProtocol was null when Disconnect was called");
-				#endregion Debug Message
-			}
-			else
-			{
-				Protocol.Stop();
-
-				base.Disconnect();
-
-				// Set Connected flag to false
-				Connected = false;
-			}
-
-			#region Debug Message
-			Log("Device_Name - Disconnect - Finish");
-			#endregion Debug Message
+			Protocol?.Stop();
+			base.Disconnect();
+			Connected = false;
 		}
-		#endregion Overrides
 	}
 }
