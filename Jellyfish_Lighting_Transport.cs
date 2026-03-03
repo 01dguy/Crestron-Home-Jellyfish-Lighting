@@ -3,9 +3,9 @@ using Crestron.RAD.Common.Transports;
 
 namespace JellyfishLighting.ExtensionDriver
 {
-	public class Device_Name_Transport : ATransportDriver
+	public class Jellyfish_Lighting_Transport : ATransportDriver
 	{
-		public Device_Name Device;
+		public Jellyfish_Lighting Device;
 
 		public bool IsSocketConnected;
 		public string ControllerHost = string.Empty;
@@ -13,7 +13,7 @@ namespace JellyfishLighting.ExtensionDriver
 		public bool UseSsl;
 		public string LastTransportError = string.Empty;
 
-		public Device_Name_Transport(Device_Name device)
+		public Jellyfish_Lighting_Transport(Jellyfish_Lighting device)
 		{
 			IsEthernetTransport = true;
 			IsConnected = false;

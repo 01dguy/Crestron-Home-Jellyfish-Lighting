@@ -4,12 +4,12 @@ using Crestron.RAD.Common.BasicDriver;
 
 namespace JellyfishLighting.ExtensionDriver
 {
-	public class Device_Name_Protocol : ABaseDriverProtocol, IDisposable
+	public class Jellyfish_Lighting_Protocol : ABaseDriverProtocol, IDisposable
 	{
-		private readonly Device_Name Device;
-		private readonly Device_Name_Transport TransportLayer;
+		private readonly Jellyfish_Lighting Device;
+		private readonly Jellyfish_Lighting_Transport TransportLayer;
 
-		public Device_Name.UiUpdateDelegate UI_Update;
+		public Jellyfish_Lighting.UiUpdateDelegate UI_Update;
 
 		public string LastStatus = "Disconnected";
 		public bool LastOnlineState;
@@ -23,7 +23,7 @@ namespace JellyfishLighting.ExtensionDriver
 		private string LastPatternFile = string.Empty;
 		private string[] LastZoneNames = new string[0];
 
-		public Device_Name_Protocol(Device_Name_Transport transport, byte id) : base(transport, id)
+		public Jellyfish_Lighting_Protocol(Jellyfish_Lighting_Transport transport, byte id) : base(transport, id)
 		{
 			Transport = transport;
 			TransportLayer = transport;

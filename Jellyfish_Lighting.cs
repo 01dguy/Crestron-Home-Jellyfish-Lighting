@@ -7,10 +7,10 @@ using Crestron.RAD.DeviceTypes.ExtensionDevice;
 
 namespace JellyfishLighting.ExtensionDriver
 {
-	public class Device_Name : AExtensionDevice, ICloudConnected
+	public class Jellyfish_Lighting : AExtensionDevice, ICloudConnected
 	{
-		public Device_Name_Transport Transport;
-		public Device_Name_Protocol Protocol;
+		public Jellyfish_Lighting_Transport Transport;
+		public Jellyfish_Lighting_Protocol Protocol;
 		public Settings_Data Settings;
 		private const string Filename = "JellyfishLightingSettings";
 
@@ -35,7 +35,7 @@ namespace JellyfishLighting.ExtensionDriver
 
 		public delegate void UiUpdateDelegate();
 
-		public Device_Name()
+		public Jellyfish_Lighting()
 		{
 			Settings = new Settings_Data();
 		}
@@ -46,7 +46,7 @@ namespace JellyfishLighting.ExtensionDriver
 			CreateDeviceDefinition();
 
 			var uiUpdate = new UiUpdateDelegate(Update_UI);
-			Transport = new Device_Name_Transport(this)
+			Transport = new Jellyfish_Lighting_Transport(this)
 			{
 				EnableLogging = InternalEnableLogging,
 				CustomLogger = InternalCustomLogger,
@@ -55,7 +55,7 @@ namespace JellyfishLighting.ExtensionDriver
 			};
 			ConnectionTransport = Transport;
 
-			Protocol = new Device_Name_Protocol(Transport, Id)
+			Protocol = new Jellyfish_Lighting_Protocol(Transport, Id)
 			{
 				EnableLogging = InternalEnableLogging,
 				CustomLogger = InternalCustomLogger,
