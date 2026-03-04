@@ -22,6 +22,7 @@ namespace JellyfishLighting.ExtensionDriver
 
 		private string LastPatternFile = string.Empty;
 		private string[] LastZoneNames = new string[0];
+		private string[] KnownZones = new string[0];
 
 		public Jellyfish_Lighting_Protocol(Jellyfish_Lighting_Transport transport, byte id) : base(transport, id)
 		{
@@ -127,7 +128,7 @@ namespace JellyfishLighting.ExtensionDriver
 
 		public void RunPattern(string filePath, string[] zoneNames, int state)
 		{
-			if (!IsValidBasicRunPatternRequest(filePath, zoneNames, state))
+			if (!IsValidBasicRunPatternRequest(filePath, zoneNames, state, KnownZones))
 			{
 				LastStatus = "RunPattern basic requires file, state (0/1), and at least one zone.";
 				UI_Update?.Invoke();
@@ -174,6 +175,13 @@ namespace JellyfishLighting.ExtensionDriver
 					LastScene = runPatternFile;
 					LastPatternFile = runPatternFile;
 				}
+
+				var runPatternZoneId = ExtractString(json, "id");
+				var runPatternZoneFromArray = ExtractFirstArrayValue(json, "zoneName");
+				var runPatternZone = !string.IsNullOrEmpty(runPatternZoneId) ? runPatternZoneId : runPatternZoneFromArray;
+				LastStatus = !string.IsNullOrEmpty(runPatternZone)
+					? "RunPattern ack: " + runPatternZone
+					: "RunPattern update received";
 			}
 
 			var brightness = ExtractInt(json, "brightness");
@@ -182,17 +190,25 @@ namespace JellyfishLighting.ExtensionDriver
 				LastBrightness = (int)brightness;
 			}
 
+			var ledPower = ExtractBool(json, "ledPower");
+			if (ledPower != null)
+			{
+				LastStatus = (bool)ledPower ? "LED power is ON" : "LED power is OFF";
+			}
+
 			if (json.IndexOf("\"patternFileList\"", StringComparison.OrdinalIgnoreCase) >= 0)
 			{
-				var patternCount = Regex.Matches(json, "\\\"readOnly\\\"").Count;
+				int folderCount;
+				int patternCount;
+				ExtractPatternCounts(json, out folderCount, out patternCount);
 				LastStatus = "Pattern list received";
-				LastZoneSummary = string.Format("Patterns: {0}", patternCount);
+				LastZoneSummary = string.Format("Folders: {0} Patterns: {1}", folderCount, patternCount);
 			}
 
 			if (json.IndexOf("\"zones\"", StringComparison.OrdinalIgnoreCase) >= 0)
 			{
-				var zoneCount = Regex.Matches(json, "\\\"numPixels\\\"").Count;
-				LastZoneSummary = string.Format("Zones: {0}", zoneCount);
+				KnownZones = ExtractZoneNames(json);
+				LastZoneSummary = string.Format("Zones: {0}", KnownZones.Length);
 			}
 
 			if (json.IndexOf("\"patternFileData\"", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -266,12 +282,36 @@ namespace JellyfishLighting.ExtensionDriver
 				Escape(direction));
 		}
 
-		private static bool IsValidBasicRunPatternRequest(string filePath, string[] zoneNames, int state)
+		private static bool IsValidBasicRunPatternRequest(string filePath, string[] zoneNames, int state, string[] knownZones)
 		{
-			return !string.IsNullOrEmpty(filePath)
-				&& zoneNames != null
-				&& zoneNames.Length > 0
-				&& (state == 0 || state == 1);
+			if (string.IsNullOrEmpty(filePath) || zoneNames == null || zoneNames.Length == 0 || (state != 0 && state != 1))
+			{
+				return false;
+			}
+
+			if (knownZones == null || knownZones.Length == 0)
+			{
+				return true;
+			}
+
+			for (var i = 0; i < zoneNames.Length; i++)
+			{
+				var matched = false;
+				for (var j = 0; j < knownZones.Length; j++)
+				{
+					if (string.Equals(zoneNames[i], knownZones[j], StringComparison.Ordinal))
+					{
+						matched = true;
+						break;
+					}
+				}
+				if (!matched)
+				{
+					return false;
+				}
+			}
+
+			return true;
 		}
 
 		private static bool ValidateAdvancedPatternData(string dataJson, string[] zoneNames, int state, out string error)
@@ -370,6 +410,50 @@ namespace JellyfishLighting.ExtensionDriver
 			return true;
 		}
 
+
+		private static string[] ExtractZoneNames(string json)
+		{
+			if (string.IsNullOrEmpty(json))
+			{
+				return new string[0];
+			}
+
+			var matches = Regex.Matches(json, "\"(?<zone>[^\"]+)\"\\s*:\\s*\\{\\s*\"numPixels\"", RegexOptions.IgnoreCase);
+			if (matches.Count == 0)
+			{
+				return new string[0];
+			}
+
+			var zones = new string[matches.Count];
+			for (var i = 0; i < matches.Count; i++)
+			{
+				zones[i] = matches[i].Groups["zone"].Value;
+			}
+			return zones;
+		}
+
+		private static void ExtractPatternCounts(string json, out int folderCount, out int patternCount)
+		{
+			folderCount = 0;
+			patternCount = 0;
+			if (string.IsNullOrEmpty(json))
+			{
+				return;
+			}
+
+			var folderHeaderMatches = Regex.Matches(json, "\"folders\"\\s*:\\s*\"[^\"]*\"\\s*,\\s*\"name\"\\s*:\\s*\"\"", RegexOptions.IgnoreCase);
+			folderCount = folderHeaderMatches.Count;
+
+			var allNameMatches = Regex.Matches(json, "\"name\"\\s*:\\s*\"(?<name>[^\"]*)\"", RegexOptions.IgnoreCase);
+			for (var i = 0; i < allNameMatches.Count; i++)
+			{
+				if (!string.IsNullOrEmpty(allNameMatches[i].Groups["name"].Value))
+				{
+					patternCount++;
+				}
+			}
+		}
+
 		private static bool ContainsKey(string json, string key)
 		{
 			return json.IndexOf("\"" + key + "\"", StringComparison.OrdinalIgnoreCase) >= 0;
@@ -412,6 +496,30 @@ namespace JellyfishLighting.ExtensionDriver
 
 			int value;
 			return int.TryParse(match.Groups["v"].Value, out value) ? value : (int?)null;
+		}
+
+		private static bool? ExtractBool(string json, string key)
+		{
+			var match = Regex.Match(json, "\"" + key + "\"\\s*:\\s*(?<v>true|false)", RegexOptions.IgnoreCase);
+			if (!match.Success)
+			{
+				return null;
+			}
+
+			return string.Equals(match.Groups["v"].Value, "true", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private static string ExtractFirstArrayValue(string json, string key)
+		{
+			var match = Regex.Match(json, "\"" + key + "\"\\s*:\\s*\\[(?<v>[^\\]]*)\\]", RegexOptions.IgnoreCase);
+			if (!match.Success)
+			{
+				return null;
+			}
+
+			var arr = match.Groups["v"].Value;
+			var first = Regex.Match(arr, "\"(?<item>[^\"]*)\"");
+			return first.Success ? first.Groups["item"].Value : null;
 		}
 
 		private static int ToPort(string value)
