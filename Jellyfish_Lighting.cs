@@ -19,6 +19,7 @@ namespace JellyfishLighting.ExtensionDriver
 		private const string ActiveSceneKey = "ActiveScene";
 		private const string BrightnessKey = "Brightness";
 		private const string ZoneSummaryKey = "ZoneSummary";
+		private const string SpeedKey = "Speed";
 		private const string UseSslKey = "UseSsl";
 		private const string PollIntervalSecondsKey = "PollIntervalSeconds";
 
@@ -27,6 +28,7 @@ namespace JellyfishLighting.ExtensionDriver
 		private PropertyValue<string> ActiveSceneProperty;
 		private PropertyValue<int> BrightnessProperty;
 		private PropertyValue<string> ZoneSummaryProperty;
+		private PropertyValue<int> SpeedProperty;
 		private PropertyValue<bool> UseSslProperty;
 		private PropertyValue<int> PollIntervalSecondsProperty;
 
@@ -72,6 +74,7 @@ namespace JellyfishLighting.ExtensionDriver
 			ActiveSceneProperty = CreateProperty<string>(new PropertyDefinition(ActiveSceneKey, null, DevicePropertyType.String));
 			BrightnessProperty = CreateProperty<int>(new PropertyDefinition(BrightnessKey, null, DevicePropertyType.Int32));
 			ZoneSummaryProperty = CreateProperty<string>(new PropertyDefinition(ZoneSummaryKey, null, DevicePropertyType.String));
+			SpeedProperty = CreateProperty<int>(new PropertyDefinition(SpeedKey, null, DevicePropertyType.Int32));
 			UseSslProperty = CreateProperty<bool>(new PropertyDefinition(UseSslKey, null, DevicePropertyType.Boolean));
 			PollIntervalSecondsProperty = CreateProperty<int>(new PropertyDefinition(PollIntervalSecondsKey, null, DevicePropertyType.Int32));
 			Commit();
@@ -89,6 +92,7 @@ namespace JellyfishLighting.ExtensionDriver
 			ActiveSceneProperty.Value = Protocol.LastScene;
 			BrightnessProperty.Value = Protocol.LastBrightness;
 			ZoneSummaryProperty.Value = Protocol.LastZoneSummary;
+			SpeedProperty.Value = Protocol.LastSpeed;
 			Commit();
 		}
 

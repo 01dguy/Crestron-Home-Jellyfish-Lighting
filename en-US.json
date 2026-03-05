@@ -12,5 +12,6 @@
   "RefreshNowLabel": "Refresh now",
   "GetPatternsAndZonesLabel": "Get patterns + zones",
   "PowerOnLabel": "Power on",
-  "PowerOffLabel": "Power off"
+  "PowerOffLabel": "Power off",
+  "SpeedLabel": "Speed"
 }

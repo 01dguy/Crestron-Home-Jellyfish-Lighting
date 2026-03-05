@@ -8,6 +8,7 @@
       <controls>
         <textdisplay id="StatusTextId" title="^StatusTextLabel" line1label="{StatusText}" line2label="{ZoneSummary}"/>
         <textdisplay id="OnlineTextId" title="^OnlineLabel" line1label="{IsOnline}" line2label="{Brightness}"/>
+        <textdisplay id="SpeedTextId" title="^SpeedLabel" line1label="{Speed}"/>
         <button id="RefreshButtonId" label="^RefreshNowLabel" action="command:RefreshNow"/>
         <button id="GetPatternsButtonId" label="^GetPatternsAndZonesLabel" action="command:GetPatternsAndZones"/>
         <button id="PowerOnButtonId" label="^PowerOnLabel" action="command:PowerOn"/>
