@@ -33,7 +33,7 @@
         "SwHandshake": -1,
         "DataBits": 0,
         "StopBits": -1,
-        "Port": 2345,
+        "Port": 9000,
         "EnableAutoPolling": true,
         "EnableAutoReconnect": true,
         "TimeBetweenCommands": 200,
