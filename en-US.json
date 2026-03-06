@@ -1,16 +1,17 @@
 {
-	"MainPageTitle": "Home_Extension_Template",
-	"DisplayTextLabel": "Display Text",
-
-	"SettingsPageTitle": "Settings",
-	"SubheaderLabel": "Subheader",
-	"ChecboxLabel": "Checkbox Label",
-	"CheckboxSecondaryLabel": "Checkbox Secondary Label",
-	"TextEntryLabel": "Text Entry Field Label",
-
-	"ButtonSettingsLabel": "Settings",
-	"SaveButtonName": "Save",
-
-	"SequenceTriggeredMethodLabel":  "Template Sequence Trigger"
-
+  "MainPageTitle": "JellyFish Lighting",
+  "StatusTextLabel": "Status / Zones",
+  "OnlineLabel": "Online / Brightness",
+  "SettingsPageTitle": "Settings",
+  "PollingSubheaderLabel": "WebSocket Polling",
+  "UseSslLabel": "Use WSS",
+  "UseSslSecondaryLabel": "Use secure websocket if supported",
+  "PollIntervalLabel": "Poll interval (seconds)",
+  "ButtonSettingsLabel": "Settings",
+  "SaveButtonName": "Save",
+  "RefreshNowLabel": "Refresh now",
+  "GetPatternsAndZonesLabel": "Get patterns + zones",
+  "PowerOnLabel": "Power on",
+  "PowerOffLabel": "Power off",
+  "SpeedLabel": "Speed"
 }
