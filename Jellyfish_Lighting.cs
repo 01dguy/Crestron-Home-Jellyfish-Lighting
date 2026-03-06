@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading;
 using Crestron.RAD.Common.Attributes.Programming;
 using Crestron.RAD.Common.Enums;
 using Crestron.RAD.Common.Interfaces;
@@ -31,6 +32,8 @@ namespace JellyfishLighting.ExtensionDriver
 		private PropertyValue<int> SpeedProperty;
 		private PropertyValue<bool> UseSslProperty;
 		private PropertyValue<int> PollIntervalSecondsProperty;
+		private readonly object _uiLock = new object();
+		private SynchronizationContext _syncContext;
 
 		[ProgrammableEvent]
 		public event EventHandler SceneUpdated;
@@ -44,6 +47,7 @@ namespace JellyfishLighting.ExtensionDriver
 
 		public void Initialize()
 		{
+			_syncContext = SynchronizationContext.Current;
 			EnableLogging = true;
 			CreateDeviceDefinition();
 
@@ -65,6 +69,9 @@ namespace JellyfishLighting.ExtensionDriver
 			};
 			DeviceProtocol = Protocol;
 			DeviceProtocol.Initialize(DriverData);
+
+			Transport.TextFrameReceived += Protocol.HandleTransportTextFrame;
+			Transport.SocketConnectionChanged += Protocol.HandleTransportConnectionChanged;
 		}
 
 		private void CreateDeviceDefinition()
@@ -82,18 +89,27 @@ namespace JellyfishLighting.ExtensionDriver
 
 		public void Update_UI()
 		{
-			if (Protocol == null)
+			if (_syncContext != null && SynchronizationContext.Current != _syncContext)
 			{
+				_syncContext.Post(_ => Update_UI(), null);
 				return;
 			}
 
-			StatusTextProperty.Value = Protocol.LastStatus;
-			IsOnlineProperty.Value = Protocol.LastOnlineState;
-			ActiveSceneProperty.Value = Protocol.LastScene;
-			BrightnessProperty.Value = Protocol.LastBrightness;
-			ZoneSummaryProperty.Value = Protocol.LastZoneSummary;
-			SpeedProperty.Value = Protocol.LastSpeed;
-			Commit();
+			lock (_uiLock)
+			{
+				if (Protocol == null)
+				{
+					return;
+				}
+
+				StatusTextProperty.Value = Protocol.LastStatus;
+				IsOnlineProperty.Value = Protocol.LastOnlineState;
+				ActiveSceneProperty.Value = Protocol.LastScene;
+				BrightnessProperty.Value = Protocol.LastBrightness;
+				ZoneSummaryProperty.Value = Protocol.LastZoneSummary;
+				SpeedProperty.Value = Protocol.LastSpeed;
+				Commit();
+			}
 		}
 
 		[ProgrammableOperation("^RefreshNowLabel")]
@@ -117,7 +133,16 @@ namespace JellyfishLighting.ExtensionDriver
 
 		public void TriggerSceneUpdatedEvent()
 		{
-			SceneUpdated?.Invoke(this, EventArgs.Empty);
+			if (_syncContext != null && SynchronizationContext.Current != _syncContext)
+			{
+				_syncContext.Post(_ => TriggerSceneUpdatedEvent(), null);
+				return;
+			}
+
+			lock (_uiLock)
+			{
+				SceneUpdated?.Invoke(this, EventArgs.Empty);
+			}
 		}
 
 		protected override IOperationResult DoCommand(string command, string[] parameters)

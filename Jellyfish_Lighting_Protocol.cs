@@ -25,6 +25,7 @@ namespace JellyfishLighting.ExtensionDriver
 		private string[] LastZoneNames = new string[0];
 		private string[] KnownZones = new string[0];
 		private string CachedPatternData = string.Empty;
+		private readonly object _stateLock = new object();
 
 		public Jellyfish_Lighting_Protocol(Jellyfish_Lighting_Transport transport, byte id) : base(transport, id)
 		{
@@ -50,7 +51,7 @@ namespace JellyfishLighting.ExtensionDriver
 			{
 				LastStatus = "Disconnected: " + TransportLayer.LastTransportError;
 				LastOnlineState = false;
-				UI_Update?.Invoke();
+				InvokeUiUpdate();
 			}
 		}
 
@@ -60,7 +61,7 @@ namespace JellyfishLighting.ExtensionDriver
 			TransportLayer.Stop();
 			LastStatus = "Disconnected";
 			LastOnlineState = false;
-			UI_Update?.Invoke();
+			InvokeUiUpdate();
 		}
 
 		public void PollNow()
@@ -82,20 +83,20 @@ namespace JellyfishLighting.ExtensionDriver
 			if (state != 0 && state != 1)
 			{
 				LastStatus = "Invalid power state. Use 0 or 1.";
-				UI_Update?.Invoke();
+				InvokeUiUpdate();
 				return;
 			}
 
 			if (string.IsNullOrEmpty(LastPatternFile) || LastZoneNames == null || LastZoneNames.Length == 0)
 			{
 				LastStatus = "Power command requires a previously selected pattern and zones.";
-				UI_Update?.Invoke();
+				InvokeUiUpdate();
 				return;
 			}
 
 			TransportLayer.SendJson(BuildRunPatternBasicCommand(LastPatternFile, LastZoneNames, state));
 			LastStatus = state == 1 ? "Power on command sent" : "Power off command sent";
-			UI_Update?.Invoke();
+			InvokeUiUpdate();
 		}
 
 		protected override void Poll()
@@ -104,14 +105,14 @@ namespace JellyfishLighting.ExtensionDriver
 			{
 				LastStatus = "WebSocket not connected";
 				LastOnlineState = false;
-				UI_Update?.Invoke();
+				InvokeUiUpdate();
 				return;
 			}
 
 			TransportLayer.SendJson(BuildGetPatternListCommand());
 			TransportLayer.SendJson(BuildGetZoneListCommand());
 			LastStatus = "Polling: requested patternFileList + zones";
-			UI_Update?.Invoke();
+			InvokeUiUpdate();
 		}
 
 		public void RequestPatternFileData(string folder, string patternName)
@@ -119,14 +120,14 @@ namespace JellyfishLighting.ExtensionDriver
 			if (string.IsNullOrEmpty(folder) || string.IsNullOrEmpty(patternName))
 			{
 				LastStatus = "Pattern file data requires folder and pattern name.";
-				UI_Update?.Invoke();
+				InvokeUiUpdate();
 				return;
 			}
 
 			LastPatternFile = folder + "/" + patternName;
 			TransportLayer.SendJson(BuildGetPatternFileDataCommand(folder, patternName));
 			LastStatus = "Requested pattern file data.";
-			UI_Update?.Invoke();
+			InvokeUiUpdate();
 		}
 
 		public void RunPattern(string filePath, string[] zoneNames, int state)
@@ -134,7 +135,7 @@ namespace JellyfishLighting.ExtensionDriver
 			if (!IsValidBasicRunPatternRequest(filePath, zoneNames, state, KnownZones))
 			{
 				LastStatus = "RunPattern basic requires file, state (0/1), and at least one known zone.";
-				UI_Update?.Invoke();
+				InvokeUiUpdate();
 				return;
 			}
 
@@ -142,7 +143,7 @@ namespace JellyfishLighting.ExtensionDriver
 			LastZoneNames = zoneNames;
 			TransportLayer.SendJson(BuildRunPatternBasicCommand(filePath, zoneNames, state));
 			LastStatus = "RunPattern basic command sent";
-			UI_Update?.Invoke();
+			InvokeUiUpdate();
 		}
 
 		public void ApplyAdvancedPatternData(string dataJson, string[] zoneNames, int state)
@@ -151,7 +152,7 @@ namespace JellyfishLighting.ExtensionDriver
 			if (!ValidateAdvancedPatternData(dataJson, zoneNames, state, out validationError))
 			{
 				LastStatus = "Advanced pattern validation failed: " + validationError;
-				UI_Update?.Invoke();
+				InvokeUiUpdate();
 				return;
 			}
 
@@ -159,7 +160,7 @@ namespace JellyfishLighting.ExtensionDriver
 			LastZoneNames = zoneNames;
 			TransportLayer.SendJson(BuildRunPatternAdvancedCommand(dataJson, zoneNames, state));
 			LastStatus = "RunPattern advanced command sent";
-			UI_Update?.Invoke();
+			InvokeUiUpdate();
 		}
 
 		public void SetBrightness(int brightness, string[] zoneNames)
@@ -167,14 +168,14 @@ namespace JellyfishLighting.ExtensionDriver
 			if (brightness < 0 || brightness > 100)
 			{
 				LastStatus = "Brightness must be between 0 and 100.";
-				UI_Update?.Invoke();
+				InvokeUiUpdate();
 				return;
 			}
 
 			if (string.IsNullOrEmpty(CachedPatternData))
 			{
 				LastStatus = "No cached pattern data. Request patternFileData first.";
-				UI_Update?.Invoke();
+				InvokeUiUpdate();
 				return;
 			}
 
@@ -187,14 +188,14 @@ namespace JellyfishLighting.ExtensionDriver
 			if (speed < 1)
 			{
 				LastStatus = "Speed must be >= 1.";
-				UI_Update?.Invoke();
+				InvokeUiUpdate();
 				return;
 			}
 
 			if (string.IsNullOrEmpty(CachedPatternData))
 			{
 				LastStatus = "No cached pattern data. Request patternFileData first.";
-				UI_Update?.Invoke();
+				InvokeUiUpdate();
 				return;
 			}
 
@@ -204,12 +205,28 @@ namespace JellyfishLighting.ExtensionDriver
 
 		public void HandleInboundWebSocketJson(string json)
 		{
-			if (string.IsNullOrEmpty(json) || json.IndexOf("\"cmd\":\"fromCtlr\"", StringComparison.OrdinalIgnoreCase) < 0)
+			if (string.IsNullOrEmpty(json))
 			{
+				Log("JellyfishLighting - ignoring empty inbound frame.");
 				return;
 			}
 
-			var previousScene = LastScene;
+			if (json.TrimStart().IndexOf("{", StringComparison.Ordinal) != 0)
+			{
+				Log("JellyfishLighting - ignoring malformed inbound frame: " + json);
+				return;
+			}
+
+			if (json.IndexOf("\"cmd\":\"fromCtlr\"", StringComparison.OrdinalIgnoreCase) < 0)
+			{
+				Log("JellyfishLighting - ignoring non-fromCtlr frame: " + json);
+				return;
+			}
+
+			var sceneChanged = false;
+			lock (_stateLock)
+			{
+				var previousScene = LastScene;
 
 			if (json.IndexOf("\"runPattern\"", StringComparison.OrdinalIgnoreCase) >= 0)
 			{
@@ -300,12 +317,47 @@ namespace JellyfishLighting.ExtensionDriver
 				LastStatus = "fromCtlr update received";
 			}
 
-			if (!string.Equals(previousScene, LastScene, StringComparison.OrdinalIgnoreCase))
+				sceneChanged = !string.Equals(previousScene, LastScene, StringComparison.OrdinalIgnoreCase);
+			}
+
+			if (sceneChanged)
 			{
 				Device.TriggerSceneUpdatedEvent();
 			}
 
-			UI_Update?.Invoke();
+			InvokeUiUpdate();
+		}
+
+		public void HandleTransportTextFrame(string frame)
+		{
+			HandleInboundWebSocketJson(frame);
+		}
+
+		public void HandleTransportConnectionChanged(bool isConnected, string reason)
+		{
+			lock (_stateLock)
+			{
+				LastOnlineState = isConnected;
+				if (isConnected)
+				{
+					LastStatus = "Connected";
+				}
+				else
+				{
+					LastStatus = string.IsNullOrEmpty(reason) ? "Disconnected" : "Disconnected: " + reason;
+				}
+			}
+
+			InvokeUiUpdate();
+		}
+
+		private void InvokeUiUpdate()
+		{
+			var update = UI_Update;
+			if (update != null)
+			{
+				update();
+			}
 		}
 
 		public static string BuildGetPatternListCommand()
