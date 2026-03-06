@@ -10,6 +10,8 @@ namespace JellyfishLighting.ExtensionDriver
 	public class Jellyfish_Lighting_Transport : ATransportDriver
 	{
 		public Jellyfish_Lighting Device;
+		public event Action<string> TextFrameReceived;
+		public event Action<bool, string> SocketConnectionChanged;
 
 		public bool IsSocketConnected;
 		public string ControllerHost = string.Empty;
@@ -19,6 +21,7 @@ namespace JellyfishLighting.ExtensionDriver
 
 		private readonly object _socketStateLock = new object();
 		private readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
+		private readonly SemaphoreSlim _receiveLock = new SemaphoreSlim(1, 1);
 		private ClientWebSocket _socketClient;
 		private int _connectionVersion;
 
@@ -75,6 +78,7 @@ namespace JellyfishLighting.ExtensionDriver
 			Task.Run(async () =>
 			{
 				ClientWebSocket socket = null;
+				var didConnect = false;
 				try
 				{
 					socket = new ClientWebSocket();
@@ -94,9 +98,12 @@ namespace JellyfishLighting.ExtensionDriver
 						IsSocketConnected = true;
 						IsConnected = true;
 						LastTransportError = string.Empty;
+						didConnect = true;
 					}
 
 					Log("JellyfishLighting - transport connected: " + socketUri);
+					NotifySocketConnectionChanged(true, string.Empty);
+					_ = RunReceiveLoop(connectVersion);
 				}
 				catch (Exception ex)
 				{
@@ -113,6 +120,7 @@ namespace JellyfishLighting.ExtensionDriver
 					}
 
 					Log("JellyfishLighting - transport start failed: " + LastTransportError);
+					NotifySocketConnectionChanged(false, didConnect ? "Connection lost" : LastTransportError);
 				}
 			});
 		}
@@ -130,6 +138,8 @@ namespace JellyfishLighting.ExtensionDriver
 				IsSocketConnected = false;
 				IsConnected = false;
 			}
+
+			NotifySocketConnectionChanged(false, "Stopped");
 
 			if (socketToClose == null)
 			{
@@ -198,8 +208,108 @@ namespace JellyfishLighting.ExtensionDriver
 				{
 					LastTransportError = ex.Message;
 					Log("JellyfishLighting - SendMethod failed: " + LastTransportError);
+					NotifySocketConnectionChanged(false, LastTransportError);
 				}
 			});
+		}
+
+		private async Task RunReceiveLoop(int connectVersion)
+		{
+			await _receiveLock.WaitAsync().ConfigureAwait(false);
+			try
+			{
+				while (true)
+				{
+					ClientWebSocket socket;
+					lock (_socketStateLock)
+					{
+						if (connectVersion != _connectionVersion)
+						{
+							return;
+						}
+
+						socket = _socketClient;
+					}
+
+					if (socket == null || socket.State != WebSocketState.Open)
+					{
+						MarkDisconnected("Socket closed");
+						return;
+					}
+
+					string message;
+					try
+					{
+						message = await ReceiveTextMessage(socket).ConfigureAwait(false);
+					}
+					catch (Exception ex)
+					{
+						MarkDisconnected(ex.Message);
+						return;
+					}
+
+					if (message == null)
+					{
+						MarkDisconnected("Remote endpoint closed");
+						return;
+					}
+
+					Log("JellyfishLighting RX: " + message);
+					TextFrameReceived?.Invoke(message);
+				}
+			}
+			finally
+			{
+				_receiveLock.Release();
+			}
+		}
+
+		private static async Task<string> ReceiveTextMessage(ClientWebSocket socket)
+		{
+			var buffer = new byte[4096];
+			var payload = new StringBuilder();
+
+			while (true)
+			{
+				var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).ConfigureAwait(false);
+				if (result.MessageType == WebSocketMessageType.Close)
+				{
+					return null;
+				}
+
+				if (result.MessageType != WebSocketMessageType.Text)
+				{
+					continue;
+				}
+
+				payload.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
+				if (result.EndOfMessage)
+				{
+					return payload.ToString();
+				}
+			}
+		}
+
+		private void MarkDisconnected(string reason)
+		{
+			LastTransportError = reason ?? "Disconnected";
+			lock (_socketStateLock)
+			{
+				IsSocketConnected = false;
+				IsConnected = false;
+			}
+
+			Log("JellyfishLighting - transport disconnected: " + LastTransportError);
+			NotifySocketConnectionChanged(false, LastTransportError);
+		}
+
+		private void NotifySocketConnectionChanged(bool isConnected, string reason)
+		{
+			var handler = SocketConnectionChanged;
+			if (handler != null)
+			{
+				handler(isConnected, reason ?? string.Empty);
+			}
 		}
 
 		private void ReplaceSocketUnsafe(ClientWebSocket newSocket)
