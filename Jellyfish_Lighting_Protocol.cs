@@ -1,5 +1,7 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using System.Web.Script.Serialization;
 using Crestron.RAD.Common.BasicDriver;
 
 namespace JellyfishLighting.ExtensionDriver
@@ -26,6 +28,45 @@ namespace JellyfishLighting.ExtensionDriver
 		private string[] KnownZones = new string[0];
 		private string CachedPatternData = string.Empty;
 		private readonly object _stateLock = new object();
+		private static readonly JavaScriptSerializer JsonSerializer = new JavaScriptSerializer();
+
+		private sealed class FromControllerPayload
+		{
+			public RunPatternPayload RunPattern;
+			public PatternFileListPayload PatternFileList;
+			public ZonesPayload Zones;
+			public PatternFileDataPayload PatternFileData;
+			public bool? LedPower;
+		}
+
+		private sealed class RunPatternPayload
+		{
+			public string File;
+			public string Data;
+			public string Id;
+			public string[] ZoneNames = new string[0];
+			public int? Brightness;
+			public int? Speed;
+		}
+
+		private sealed class PatternFileListPayload
+		{
+			public int FolderCount;
+			public int PatternCount;
+		}
+
+		private sealed class ZonesPayload
+		{
+			public string[] ZoneNames = new string[0];
+		}
+
+		private sealed class PatternFileDataPayload
+		{
+			public string JsonData;
+			public int? Brightness;
+			public int? Speed;
+		}
+
 
 		public Jellyfish_Lighting_Protocol(Jellyfish_Lighting_Transport transport, byte id) : base(transport, id)
 		{
@@ -223,99 +264,93 @@ namespace JellyfishLighting.ExtensionDriver
 				return;
 			}
 
+			FromControllerPayload payload;
+			if (!TryParseFromControllerPayload(json, out payload))
+			{
+				Log("JellyfishLighting - unable to parse fromCtlr payload: " + json);
+				return;
+			}
+
 			var sceneChanged = false;
 			lock (_stateLock)
 			{
 				var previousScene = LastScene;
 
-			if (json.IndexOf("\"runPattern\"", StringComparison.OrdinalIgnoreCase) >= 0)
-			{
-				var runPatternFile = ExtractString(json, "file");
-				if (!string.IsNullOrEmpty(runPatternFile))
+				if (payload.RunPattern != null)
 				{
-					LastScene = runPatternFile;
+					var runPatternFile = payload.RunPattern.File;
 					if (!string.IsNullOrEmpty(runPatternFile))
 					{
+						LastScene = runPatternFile;
 						LastPatternFile = runPatternFile;
 					}
+
+					var runPatternData = payload.RunPattern.Data;
+					if (!string.IsNullOrEmpty(runPatternData))
+					{
+						CachedPatternData = runPatternData;
+						if (payload.RunPattern.Brightness != null)
+						{
+							LastBrightness = (int)payload.RunPattern.Brightness;
+						}
+						if (payload.RunPattern.Speed != null)
+						{
+							LastSpeed = (int)payload.RunPattern.Speed;
+						}
+					}
+
+					if (payload.RunPattern.Brightness != null)
+					{
+						LastBrightness = (int)payload.RunPattern.Brightness;
+					}
+
+					var runPatternZoneId = payload.RunPattern.Id;
+					var runPatternZoneFromArray = payload.RunPattern.ZoneNames.Length > 0 ? payload.RunPattern.ZoneNames[0] : null;
+					var runPatternZone = !string.IsNullOrEmpty(runPatternZoneId) ? runPatternZoneId : runPatternZoneFromArray;
+					LastStatus = !string.IsNullOrEmpty(runPatternZone)
+						? "RunPattern ack: " + runPatternZone
+						: "RunPattern update received";
 				}
 
-				var runPatternData = ExtractString(json, "data");
-				if (!string.IsNullOrEmpty(runPatternData))
+				if (payload.LedPower != null)
 				{
-					CachedPatternData = runPatternData;
-					var parsedBrightness = ExtractInt(runPatternData, "brightness");
-					if (parsedBrightness != null)
-					{
-						LastBrightness = (int)parsedBrightness;
-					}
-					var parsedSpeed = ExtractInt(runPatternData, "speed");
-					if (parsedSpeed != null)
-					{
-						LastSpeed = (int)parsedSpeed;
-					}
+					LastStatus = (bool)payload.LedPower ? "LED power is ON" : "LED power is OFF";
 				}
 
-				var runPatternZoneId = ExtractString(json, "id");
-				var runPatternZoneFromArray = ExtractFirstArrayValue(json, "zoneName");
-				var runPatternZone = !string.IsNullOrEmpty(runPatternZoneId) ? runPatternZoneId : runPatternZoneFromArray;
-				LastStatus = !string.IsNullOrEmpty(runPatternZone)
-					? "RunPattern ack: " + runPatternZone
-					: "RunPattern update received";
-			}
-
-			var brightness = ExtractInt(json, "brightness");
-			if (brightness != null)
-			{
-				LastBrightness = (int)brightness;
-			}
-
-			var ledPower = ExtractBool(json, "ledPower");
-			if (ledPower != null)
-			{
-				LastStatus = (bool)ledPower ? "LED power is ON" : "LED power is OFF";
-			}
-
-			if (json.IndexOf("\"patternFileList\"", StringComparison.OrdinalIgnoreCase) >= 0)
-			{
-				int folderCount;
-				int patternCount;
-				ExtractPatternCounts(json, out folderCount, out patternCount);
-				LastStatus = "Pattern list received";
-				LastZoneSummary = string.Format("Folders: {0} Patterns: {1}", folderCount, patternCount);
-			}
-
-			if (json.IndexOf("\"zones\"", StringComparison.OrdinalIgnoreCase) >= 0)
-			{
-				KnownZones = ExtractZoneNames(json);
-				LastZoneSummary = string.Format("Zones: {0}", KnownZones.Length);
-			}
-
-			if (json.IndexOf("\"patternFileData\"", StringComparison.OrdinalIgnoreCase) >= 0)
-			{
-				var patternData = ExtractString(json, "jsonData");
-				if (!string.IsNullOrEmpty(patternData))
+				if (payload.PatternFileList != null)
 				{
-					CachedPatternData = patternData;
-					var parsedBrightness = ExtractInt(patternData, "brightness");
-					if (parsedBrightness != null)
-					{
-						LastBrightness = (int)parsedBrightness;
-					}
-					var parsedSpeed = ExtractInt(patternData, "speed");
-					if (parsedSpeed != null)
-					{
-						LastSpeed = (int)parsedSpeed;
-					}
+					LastStatus = "Pattern list received";
+					LastZoneSummary = string.Format("Folders: {0} Patterns: {1}", payload.PatternFileList.FolderCount, payload.PatternFileList.PatternCount);
 				}
-				LastStatus = "Pattern file data received";
-			}
 
-			LastOnlineState = true;
-			if (string.IsNullOrEmpty(LastStatus) || LastStatus == "Disconnected")
-			{
-				LastStatus = "fromCtlr update received";
-			}
+				if (payload.Zones != null)
+				{
+					KnownZones = payload.Zones.ZoneNames;
+					LastZoneSummary = string.Format("Zones: {0}", KnownZones.Length);
+				}
+
+				if (payload.PatternFileData != null)
+				{
+					if (!string.IsNullOrEmpty(payload.PatternFileData.JsonData))
+					{
+						CachedPatternData = payload.PatternFileData.JsonData;
+						if (payload.PatternFileData.Brightness != null)
+						{
+							LastBrightness = (int)payload.PatternFileData.Brightness;
+						}
+						if (payload.PatternFileData.Speed != null)
+						{
+							LastSpeed = (int)payload.PatternFileData.Speed;
+						}
+					}
+					LastStatus = "Pattern file data received";
+				}
+
+				LastOnlineState = true;
+				if (string.IsNullOrEmpty(LastStatus) || LastStatus == "Disconnected")
+				{
+					LastStatus = "fromCtlr update received";
+				}
 
 				sceneChanged = !string.Equals(previousScene, LastScene, StringComparison.OrdinalIgnoreCase);
 			}
@@ -362,30 +397,59 @@ namespace JellyfishLighting.ExtensionDriver
 
 		public static string BuildGetPatternListCommand()
 		{
-			return "{\"cmd\":\"toCtlrGet\",\"get\":[[\"patternFileList\"]]}";
+			return Serialize(new Dictionary<string, object>
+			{
+				{ "cmd", "toCtlrGet" },
+				{ "get", new object[] { new object[] { "patternFileList" } } }
+			});
 		}
 
 		public static string BuildGetZoneListCommand()
 		{
-			return "{\"cmd\":\"toCtlrGet\",\"get\":[[\"zones\"]]}";
+			return Serialize(new Dictionary<string, object>
+			{
+				{ "cmd", "toCtlrGet" },
+				{ "get", new object[] { new object[] { "zones" } } }
+			});
 		}
 
 		public static string BuildGetPatternFileDataCommand(string folder, string fileName)
 		{
-			return string.Format("{{\"cmd\":\"toCtlrGet\",\"get\":[[\"patternFileData\",\"{0}\",\"{1}\"]]}}", Escape(folder), Escape(fileName));
+			return Serialize(new Dictionary<string, object>
+			{
+				{ "cmd", "toCtlrGet" },
+				{ "get", new object[] { new object[] { "patternFileData", folder ?? string.Empty, fileName ?? string.Empty } } }
+			});
 		}
 
 		public static string BuildRunPatternBasicCommand(string filePath, string[] zoneNames, int state)
 		{
-			var zones = BuildZoneArray(zoneNames);
-			return string.Format("{{\"cmd\":\"toCtlrSet\",\"runPattern\":{{\"file\":\"{0}\",\"data\":\"\",\"id\":\"\",\"state\":{1},\"zoneName\":[{2}]}}}}", Escape(filePath), state, zones);
+			return Serialize(new Dictionary<string, object>
+			{
+				{ "cmd", "toCtlrSet" },
+				{ "runPattern", BuildRunPatternPayload(filePath, string.Empty, state, zoneNames) }
+			});
 		}
 
 		public static string BuildRunPatternAdvancedCommand(string dataJson, string[] zoneNames, int state)
 		{
-			var zones = BuildZoneArray(zoneNames);
-			var escapedData = Escape(dataJson);
-			return string.Format("{{\"cmd\":\"toCtlrSet\",\"runPattern\":{{\"file\":\"\",\"data\":\"{0}\",\"id\":\"\",\"state\":{1},\"zoneName\":[{2}]}}}}", escapedData, state, zones);
+			return Serialize(new Dictionary<string, object>
+			{
+				{ "cmd", "toCtlrSet" },
+				{ "runPattern", BuildRunPatternPayload(string.Empty, dataJson ?? string.Empty, state, zoneNames) }
+			});
+		}
+
+		private static Dictionary<string, object> BuildRunPatternPayload(string filePath, string data, int state, string[] zoneNames)
+		{
+			return new Dictionary<string, object>
+			{
+				{ "file", filePath ?? string.Empty },
+				{ "data", data ?? string.Empty },
+				{ "id", string.Empty },
+				{ "state", state },
+				{ "zoneName", zoneNames ?? new string[0] }
+			};
 		}
 
 		private static bool IsValidBasicRunPatternRequest(string filePath, string[] zoneNames, int state, string[] knownZones)
@@ -525,46 +589,160 @@ namespace JellyfishLighting.ExtensionDriver
 				RegexOptions.IgnoreCase);
 		}
 
-		private static string[] ExtractZoneNames(string json)
+		private static bool TryParseFromControllerPayload(string json, out FromControllerPayload payload)
 		{
-			if (string.IsNullOrEmpty(json))
+			payload = null;
+			object rawRoot;
+			if (!TryDeserializeJson(json, out rawRoot))
 			{
-				return new string[0];
+				return false;
 			}
 
-			var matches = Regex.Matches(json, "\\\"(?<zone>[^\\\"]+)\\\"\\s*:\\s*\\{\\s*\\\"numPixels\\\"", RegexOptions.IgnoreCase);
-			if (matches.Count == 0)
+			var root = rawRoot as Dictionary<string, object>;
+			if (root == null)
 			{
-				return new string[0];
+				return false;
 			}
 
-			var zones = new string[matches.Count];
-			for (var i = 0; i < matches.Count; i++)
+			payload = new FromControllerPayload
 			{
-				zones[i] = matches[i].Groups["zone"].Value;
-			}
-			return zones;
+				RunPattern = ParseRunPattern(root),
+				PatternFileList = ParsePatternFileList(root),
+				Zones = ParseZones(root),
+				PatternFileData = ParsePatternFileData(root),
+				LedPower = GetBool(root, "ledPower")
+			};
+
+			return true;
 		}
 
-		private static void ExtractPatternCounts(string json, out int folderCount, out int patternCount)
+		private static RunPatternPayload ParseRunPattern(Dictionary<string, object> root)
 		{
-			folderCount = 0;
-			patternCount = 0;
-			if (string.IsNullOrEmpty(json))
+			var runPatternObject = GetDictionary(root, "runPattern");
+			if (runPatternObject == null)
 			{
-				return;
+				return null;
 			}
 
-			var folderHeaderMatches = Regex.Matches(json, "\\\"folders\\\"\\s*:\\s*\\\"[^\\\"]*\\\"\\s*,\\s*\\\"name\\\"\\s*:\\s*\\\"\\\"", RegexOptions.IgnoreCase);
-			folderCount = folderHeaderMatches.Count;
-
-			var allNameMatches = Regex.Matches(json, "\\\"name\\\"\\s*:\\s*\\\"(?<name>[^\\\"]*)\\\"", RegexOptions.IgnoreCase);
-			for (var i = 0; i < allNameMatches.Count; i++)
+			var payload = new RunPatternPayload
 			{
-				if (!string.IsNullOrEmpty(allNameMatches[i].Groups["name"].Value))
+				File = GetString(runPatternObject, "file"),
+				Data = GetString(runPatternObject, "data"),
+				Id = GetString(runPatternObject, "id"),
+				ZoneNames = GetStringArray(runPatternObject, "zoneName"),
+				Brightness = GetInt(runPatternObject, "brightness")
+			};
+
+			Dictionary<string, object> nestedData;
+			if (TryParseNestedJson(payload.Data, out nestedData))
+			{
+				payload.Brightness = payload.Brightness ?? GetIntWithRunDataFallback(nestedData, "brightness");
+				payload.Speed = GetIntWithRunDataFallback(nestedData, "speed");
+			}
+
+			return payload;
+		}
+
+		private static PatternFileListPayload ParsePatternFileList(Dictionary<string, object> root)
+		{
+			var listObject = GetArray(root, "patternFileList");
+			if (listObject == null)
+			{
+				return null;
+			}
+
+			var payload = new PatternFileListPayload();
+			for (var i = 0; i < listObject.Length; i++)
+			{
+				var item = listObject[i] as Dictionary<string, object>;
+				if (item == null)
 				{
-					patternCount++;
+					continue;
 				}
+
+				var name = GetString(item, "name") ?? string.Empty;
+				if (string.IsNullOrEmpty(name))
+				{
+					payload.FolderCount++;
+				}
+				else
+				{
+					payload.PatternCount++;
+				}
+			}
+
+			return payload;
+		}
+
+		private static ZonesPayload ParseZones(Dictionary<string, object> root)
+		{
+			var zonesObject = GetDictionary(root, "zones");
+			if (zonesObject == null)
+			{
+				return null;
+			}
+
+			var zones = new List<string>();
+			foreach (var key in zonesObject.Keys)
+			{
+				zones.Add(key);
+			}
+
+			return new ZonesPayload { ZoneNames = zones.ToArray() };
+		}
+
+		private static PatternFileDataPayload ParsePatternFileData(Dictionary<string, object> root)
+		{
+			var patternFileData = GetDictionary(root, "patternFileData");
+			if (patternFileData == null)
+			{
+				return null;
+			}
+
+			var payload = new PatternFileDataPayload
+			{
+				JsonData = GetString(patternFileData, "jsonData")
+			};
+
+			Dictionary<string, object> nested;
+			if (TryParseNestedJson(payload.JsonData, out nested))
+			{
+				payload.Brightness = GetIntWithRunDataFallback(nested, "brightness");
+				payload.Speed = GetIntWithRunDataFallback(nested, "speed");
+			}
+
+			return payload;
+		}
+
+		private static bool TryParseNestedJson(string json, out Dictionary<string, object> nested)
+		{
+			nested = null;
+			if (string.IsNullOrEmpty(json))
+			{
+				return false;
+			}
+
+			object raw;
+			if (!TryDeserializeJson(json, out raw))
+			{
+				return false;
+			}
+
+			nested = raw as Dictionary<string, object>;
+			return nested != null;
+		}
+
+		private static bool TryDeserializeJson(string json, out object result)
+		{
+			result = null;
+			try
+			{
+				result = JsonSerializer.DeserializeObject(json);
+				return true;
+			}
+			catch
+			{
+				return false;
 			}
 		}
 
@@ -573,67 +751,126 @@ namespace JellyfishLighting.ExtensionDriver
 			return json.IndexOf("\"" + key + "\"", StringComparison.OrdinalIgnoreCase) >= 0;
 		}
 
-		private static string BuildZoneArray(string[] zoneNames)
-		{
-			if (zoneNames == null || zoneNames.Length == 0)
-			{
-				return string.Empty;
-			}
-
-			var parts = new string[zoneNames.Length];
-			for (var i = 0; i < zoneNames.Length; i++)
-			{
-				parts[i] = "\"" + Escape(zoneNames[i]) + "\"";
-			}
-
-			return string.Join(",", parts);
-		}
-
-		private static string Escape(string value)
-		{
-			return string.IsNullOrEmpty(value) ? string.Empty : value.Replace("\\", "\\\\").Replace("\"", "\\\"");
-		}
-
 		private static string ExtractString(string json, string key)
 		{
-			var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*\\\"(?<v>[^\\\"]*)\\\"", RegexOptions.IgnoreCase);
-			return match.Success ? match.Groups["v"].Value : null;
+			Dictionary<string, object> parsed;
+			if (!TryParseNestedJson(json, out parsed))
+			{
+				return null;
+			}
+			return GetString(parsed, key);
 		}
 
 		private static int? ExtractInt(string json, string key)
 		{
-			var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*(?<v>-?\\d+)", RegexOptions.IgnoreCase);
-			if (!match.Success)
+			Dictionary<string, object> parsed;
+			if (!TryParseNestedJson(json, out parsed))
 			{
 				return null;
+			}
+			return GetIntWithRunDataFallback(parsed, key);
+		}
+
+		private static Dictionary<string, object> GetDictionary(Dictionary<string, object> source, string key)
+		{
+			if (source == null || !source.ContainsKey(key) || source[key] == null)
+			{
+				return null;
+			}
+			return source[key] as Dictionary<string, object>;
+		}
+
+		private static object[] GetArray(Dictionary<string, object> source, string key)
+		{
+			if (source == null || !source.ContainsKey(key) || source[key] == null)
+			{
+				return null;
+			}
+			return source[key] as object[];
+		}
+
+		private static string GetString(Dictionary<string, object> source, string key)
+		{
+			if (source == null || !source.ContainsKey(key) || source[key] == null)
+			{
+				return null;
+			}
+			return source[key] as string;
+		}
+
+		private static int? GetInt(Dictionary<string, object> source, string key)
+		{
+			if (source == null || !source.ContainsKey(key) || source[key] == null)
+			{
+				return null;
+			}
+
+			if (source[key] is int)
+			{
+				return (int)source[key];
+			}
+			if (source[key] is long)
+			{
+				return (int)(long)source[key];
+			}
+			if (source[key] is double)
+			{
+				return (int)(double)source[key];
 			}
 
 			int value;
-			return int.TryParse(match.Groups["v"].Value, out value) ? value : (int?)null;
+			return int.TryParse(source[key].ToString(), out value) ? value : (int?)null;
 		}
 
-		private static bool? ExtractBool(string json, string key)
+
+		private static int? GetIntWithRunDataFallback(Dictionary<string, object> source, string key)
 		{
-			var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*(?<v>true|false)", RegexOptions.IgnoreCase);
-			if (!match.Success)
+			var value = GetInt(source, key);
+			if (value != null)
+			{
+				return value;
+			}
+
+			var runData = GetDictionary(source, "runData");
+			return runData != null ? GetInt(runData, key) : null;
+		}
+		private static bool? GetBool(Dictionary<string, object> source, string key)
+		{
+			if (source == null || !source.ContainsKey(key) || source[key] == null)
 			{
 				return null;
 			}
-
-			return string.Equals(match.Groups["v"].Value, "true", StringComparison.OrdinalIgnoreCase);
+			if (source[key] is bool)
+			{
+				return (bool)source[key];
+			}
+			bool value;
+			return bool.TryParse(source[key].ToString(), out value) ? value : (bool?)null;
 		}
 
-		private static string ExtractFirstArrayValue(string json, string key)
+		private static string[] GetStringArray(Dictionary<string, object> source, string key)
 		{
-			var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*\\[(?<v>[^\\]]*)\\]", RegexOptions.IgnoreCase);
-			if (!match.Success)
+			var items = GetArray(source, key);
+			if (items == null)
 			{
-				return null;
+				return new string[0];
 			}
 
-			var arr = match.Groups["v"].Value;
-			var first = Regex.Match(arr, "\\\"(?<item>[^\\\"]*)\\\"");
-			return first.Success ? first.Groups["item"].Value : null;
+			var values = new List<string>();
+			for (var i = 0; i < items.Length; i++)
+			{
+				if (items[i] is string)
+				{
+					values.Add((string)items[i]);
+				}
+			}
+
+			return values.ToArray();
+		}
+
+		private static string Serialize(object payload)
+		{
+			return JsonSerializer.Serialize(payload);
 		}
 
 		private static int ToPort(string value)
