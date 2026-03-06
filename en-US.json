@@ -5,7 +5,7 @@
   "SettingsPageTitle": "Settings",
   "PollingSubheaderLabel": "WebSocket Polling",
   "UseSslLabel": "Use WSS",
-  "UseSslSecondaryLabel": "Use secure websocket if supported",
+  "UseSslSecondaryLabel": "Use secure websocket only when site/controller supports it (default: off => ws://)",
   "PollIntervalLabel": "Poll interval (seconds)",
   "ButtonSettingsLabel": "Settings",
   "SaveButtonName": "Save",
