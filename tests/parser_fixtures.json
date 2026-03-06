@@ -1,0 +1,27 @@
+[
+  {
+    "name": "runPattern ack with nested data",
+    "frame": "{\"cmd\":\"fromCtlr\",\"runPattern\":{\"file\":\"Holiday/Classic.json\",\"data\":\"{\\\"brightness\\\":72,\\\"speed\\\":8,\\\"effect\\\":\\\"No Effect\\\"}\",\"id\":\"Roofline\",\"state\":1,\"zoneName\":[\"Roofline\"]}}",
+    "expect": {
+      "scene": "Holiday/Classic.json",
+      "zone": "Roofline",
+      "brightness": 72,
+      "speed": 8
+    }
+  },
+  {
+    "name": "patternFileData with escaped jsonData",
+    "frame": "{\"cmd\":\"fromCtlr\",\"patternFileData\":{\"folder\":\"Holiday\",\"name\":\"Classic\",\"jsonData\":\"{\\\"colors\\\":[255,0,0],\\\"runData\\\":{\\\"brightness\\\":55,\\\"speed\\\":4}}\"}}",
+    "expect": {
+      "brightness": 55,
+      "speed": 4
+    }
+  },
+  {
+    "name": "zones dictionary",
+    "frame": "{\"cmd\":\"fromCtlr\",\"zones\":{\"Roofline\":{\"numPixels\":190},\"Dormer\":{\"numPixels\":60}}}",
+    "expect": {
+      "zones": ["Roofline", "Dormer"]
+    }
+  }
+]
