@@ -4,7 +4,8 @@ This project is a JellyFish Crestron Home extension scaffold aligned to the LAN 
 
 ## Current implemented behaviors
 
-- WebSocket transport scaffold with configurable host/port and ws/wss URI generation.
+- WebSocket transport scaffold with configurable host/port and `ws`/`wss` URI generation.
+- Transport now exposes an inbound frame callback (`ReceiveJsonFromSocket(...)` -> `InboundJsonReceived`) so received websocket text frames can be routed directly into protocol parsing.
 - Poll flow sends:
   - `patternFileList`
   - `zones`
@@ -21,17 +22,22 @@ This project is a JellyFish Crestron Home extension scaffold aligned to the LAN 
 - Pattern data cache + update helpers:
   - `SetBrightness(...)`
   - `SetSpeed(...)`
+- Status aggregation separates the latest power status from command/ack status to reduce rapid status churn in UI.
+
+## Captured firmware behavior (4.1.13)
+
+Validated against provided captures for:
+- Connection: `ws://` (non-secure)
+- Zones: `Garage Door`, `Speaker Soffit`
+- Pattern: `Thanksgiving/Thanksgiving paint`
+- Per-zone `runPattern` acknowledgements via both `id` and `zoneName`
+- Repeated advanced `runPattern` updates carrying escaped `data` JSON with `runData.speed` and `runData.brightness`
 
 ## Notes
 
 - Real socket connect/read/write remains TODO in transport; protocol and payload handling are now aligned with captured real responses.
-- Environment data gathered so far indicates controller connectivity over `ws://` (non-secure) for current setup.
+- Metadata default communication port is set to `80` (legacy arbitrary `2345` removed).
 
 ## Next production step
 
-Implement actual socket I/O in `Jellyfish_Lighting_Transport` and route inbound frames into `HandleInboundWebSocketJson(...)`.
-
-## Parser fixture validation
-
-- Added captured `fromCtlr` fixture frames under `tests/parser_fixtures.json` to validate nested and escaped payloads (`runPattern`, `patternFileData`, and `zones`).
-- Run `python tests/validate_parser_fixtures.py` to verify fixture parsing behavior.
+Implement actual websocket I/O in `Jellyfish_Lighting_Transport` and invoke `ReceiveJsonFromSocket(...)` for each inbound text frame.
