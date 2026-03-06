@@ -30,3 +30,8 @@ This project is a JellyFish Crestron Home extension scaffold aligned to the LAN 
 ## Next production step
 
 Implement actual socket I/O in `Jellyfish_Lighting_Transport` and route inbound frames into `HandleInboundWebSocketJson(...)`.
+
+## Parser fixture validation
+
+- Added captured `fromCtlr` fixture frames under `tests/parser_fixtures.json` to validate nested and escaped payloads (`runPattern`, `patternFileData`, and `zones`).
+- Run `python tests/validate_parser_fixtures.py` to verify fixture parsing behavior.
