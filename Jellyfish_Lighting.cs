@@ -20,6 +20,10 @@ namespace JellyfishLighting.ExtensionDriver
 		private const string BrightnessKey = "Brightness";
 		private const string ZoneSummaryKey = "ZoneSummary";
 		private const string SpeedKey = "Speed";
+		private const string PatternPathKey = "PatternPath";
+		private const string SelectedZonesKey = "SelectedZones";
+		private const string RequestedBrightnessKey = "RequestedBrightness";
+		private const string RequestedSpeedKey = "RequestedSpeed";
 		private const string UseSslKey = "UseSsl";
 		private const string PollIntervalSecondsKey = "PollIntervalSeconds";
 
@@ -29,6 +33,10 @@ namespace JellyfishLighting.ExtensionDriver
 		private PropertyValue<int> BrightnessProperty;
 		private PropertyValue<string> ZoneSummaryProperty;
 		private PropertyValue<int> SpeedProperty;
+		private PropertyValue<string> PatternPathProperty;
+		private PropertyValue<string> SelectedZonesProperty;
+		private PropertyValue<int> RequestedBrightnessProperty;
+		private PropertyValue<int> RequestedSpeedProperty;
 		private PropertyValue<bool> UseSslProperty;
 		private PropertyValue<int> PollIntervalSecondsProperty;
 
@@ -76,6 +84,10 @@ namespace JellyfishLighting.ExtensionDriver
 			BrightnessProperty = CreateProperty<int>(new PropertyDefinition(BrightnessKey, null, DevicePropertyType.Int32));
 			ZoneSummaryProperty = CreateProperty<string>(new PropertyDefinition(ZoneSummaryKey, null, DevicePropertyType.String));
 			SpeedProperty = CreateProperty<int>(new PropertyDefinition(SpeedKey, null, DevicePropertyType.Int32));
+			PatternPathProperty = CreateProperty<string>(new PropertyDefinition(PatternPathKey, null, DevicePropertyType.String));
+			SelectedZonesProperty = CreateProperty<string>(new PropertyDefinition(SelectedZonesKey, null, DevicePropertyType.String));
+			RequestedBrightnessProperty = CreateProperty<int>(new PropertyDefinition(RequestedBrightnessKey, null, DevicePropertyType.Int32));
+			RequestedSpeedProperty = CreateProperty<int>(new PropertyDefinition(RequestedSpeedKey, null, DevicePropertyType.Int32));
 			UseSslProperty = CreateProperty<bool>(new PropertyDefinition(UseSslKey, null, DevicePropertyType.Boolean));
 			PollIntervalSecondsProperty = CreateProperty<int>(new PropertyDefinition(PollIntervalSecondsKey, null, DevicePropertyType.Int32));
 			Commit();
@@ -146,6 +158,18 @@ namespace JellyfishLighting.ExtensionDriver
 				case "PowerOff":
 					Protocol?.SetPowerState(0);
 					break;
+				case "RequestPatternData":
+					RequestPatternData();
+					break;
+				case "RunSelectedPattern":
+					RunSelectedPattern();
+					break;
+				case "SetSelectedBrightness":
+					SetSelectedBrightness();
+					break;
+				case "SetSelectedSpeed":
+					SetSelectedSpeed();
+					break;
 			}
 
 			Commit();
@@ -164,6 +188,26 @@ namespace JellyfishLighting.ExtensionDriver
 					if (pollInterval != null)
 					{
 						PollIntervalSecondsProperty.Value = (int)pollInterval;
+					}
+					break;
+				case PatternPathKey:
+					PatternPathProperty.Value = ToText(value);
+					break;
+				case SelectedZonesKey:
+					SelectedZonesProperty.Value = ToText(value);
+					break;
+				case RequestedBrightnessKey:
+					var requestedBrightness = ToInt(value);
+					if (requestedBrightness != null)
+					{
+						RequestedBrightnessProperty.Value = (int)requestedBrightness;
+					}
+					break;
+				case RequestedSpeedKey:
+					var requestedSpeed = ToInt(value);
+					if (requestedSpeed != null)
+					{
+						RequestedSpeedProperty.Value = (int)requestedSpeed;
 					}
 					break;
 			}
@@ -204,6 +248,122 @@ namespace JellyfishLighting.ExtensionDriver
 			}
 			int parsed;
 			return int.TryParse(value.ToString(), out parsed) ? parsed : (int?)null;
+		}
+
+		private static string ToText<T>(T value)
+		{
+			return value == null ? string.Empty : value.ToString();
+		}
+
+		private void RequestPatternData()
+		{
+			if (Protocol == null)
+			{
+				return;
+			}
+
+			var patternPath = (PatternPathProperty.Value ?? string.Empty).Trim();
+			var separatorIndex = patternPath.LastIndexOf('/');
+			if (separatorIndex <= 0 || separatorIndex == patternPath.Length - 1)
+			{
+				SetUserStatus("Enter pattern path as folder/pattern (example: Holidays/CandyCane).", false);
+				return;
+			}
+
+			var folder = patternPath.Substring(0, separatorIndex);
+			var patternName = patternPath.Substring(separatorIndex + 1);
+			Protocol.RequestPatternFileData(folder, patternName);
+		}
+
+		private void RunSelectedPattern()
+		{
+			if (Protocol == null)
+			{
+				return;
+			}
+
+			var zones = ParseZones(SelectedZonesProperty.Value);
+			if (zones.Length == 0)
+			{
+				SetUserStatus("Select at least one zone. Use comma-separated names (example: Front Roof,Garage).", false);
+				return;
+			}
+
+			var patternPath = (PatternPathProperty.Value ?? string.Empty).Trim();
+			if (string.IsNullOrEmpty(patternPath))
+			{
+				SetUserStatus("Enter a pattern path before running (folder/pattern).", false);
+				return;
+			}
+
+			Protocol.RunPattern(patternPath, zones, 1);
+		}
+
+		private void SetSelectedBrightness()
+		{
+			if (Protocol == null)
+			{
+				return;
+			}
+
+			var zones = ParseZones(SelectedZonesProperty.Value);
+			if (zones.Length == 0)
+			{
+				SetUserStatus("Select zones before setting brightness. Use comma-separated names.", false);
+				return;
+			}
+
+			Protocol.SetBrightness(RequestedBrightnessProperty.Value, zones);
+		}
+
+		private void SetSelectedSpeed()
+		{
+			if (Protocol == null)
+			{
+				return;
+			}
+
+			var zones = ParseZones(SelectedZonesProperty.Value);
+			if (zones.Length == 0)
+			{
+				SetUserStatus("Select zones before setting speed. Use comma-separated names.", false);
+				return;
+			}
+
+			Protocol.SetSpeed(RequestedSpeedProperty.Value, zones);
+		}
+
+		private void SetUserStatus(string message, bool isOnline)
+		{
+			if (Protocol == null)
+			{
+				return;
+			}
+
+			Protocol.LastStatus = message;
+			Protocol.LastOnlineState = isOnline;
+			Update_UI();
+		}
+
+		private static string[] ParseZones(string zoneText)
+		{
+			if (string.IsNullOrEmpty(zoneText))
+			{
+				return new string[0];
+			}
+
+			var split = zoneText.Split(',');
+			var zones = new System.Collections.Generic.List<string>();
+			foreach (var item in split)
+			{
+				var trimmed = item.Trim();
+				if (!string.IsNullOrEmpty(trimmed))
+				{
+					zones.Add(trimmed);
+				}
+			}
+
+			return zones.ToArray();
 		}
 
 		public override void Connect()
