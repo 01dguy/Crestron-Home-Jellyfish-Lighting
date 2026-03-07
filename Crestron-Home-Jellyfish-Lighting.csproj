@@ -33,6 +33,9 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="Crestron.DeviceDrivers.API">
+      <HintPath>..\..\..\..\..\crestron_drivers_sdk\Libraries\Crestron.DeviceDrivers.API.dll</HintPath>
+    </Reference>
     <Reference Include="Crestron.SimplSharpPro.AudioDistribution, Version=1.0.0.0, Culture=neutral, PublicKeyToken=1099c178b3b54c3b, processorArchitecture=MSIL">
       <HintPath>packages\Crestron.SimplSharp.SDK.ProgramLibrary.2.21.226\lib\net47\Crestron.SimplSharpPro.AudioDistribution.dll</HintPath>
     </Reference>
@@ -83,6 +86,12 @@
     </Reference>
     <Reference Include="Crestron.SimplSharpPro.UI, Version=1.0.0.0, Culture=neutral, PublicKeyToken=1099c178b3b54c3b, processorArchitecture=MSIL">
       <HintPath>packages\Crestron.SimplSharp.SDK.ProgramLibrary.2.21.226\lib\net47\Crestron.SimplSharpPro.UI.dll</HintPath>
+    </Reference>
+    <Reference Include="RADCommon">
+      <HintPath>..\..\..\..\..\crestron_drivers_sdk\Libraries\RADCommon.dll</HintPath>
+    </Reference>
+    <Reference Include="RADProTransports">
+      <HintPath>..\..\..\..\..\crestron_drivers_sdk\Libraries\RADProTransports.dll</HintPath>
     </Reference>
     <Reference Include="SimplSharpAutoUpdateInterface, Version=1.0.0.0, Culture=neutral, PublicKeyToken=1099c178b3b54c3b, processorArchitecture=MSIL">
       <HintPath>packages\Crestron.SimplSharp.SDK.Library.2.21.226\lib\net47\SimplSharpAutoUpdateInterface.dll</HintPath>
@@ -149,6 +158,7 @@
     <None Include="README.md" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include=".gitignore" />
     <Content Include="UiDefinition.xml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

@@ -45,7 +45,7 @@ The integration should always be configured with these values before connect:
 Recommended defaults (unless the site requires an override):
 
 - URI scheme: **`ws://`** (`UseSsl = false`)
-- Port: **`80`**
+- Port: **`9000`**
 
 Use `wss://` (`UseSsl = true`) only when the controller/site deployment explicitly supports secure WebSocket termination.
 
@@ -65,7 +65,7 @@ Use `websocat` to capture real frames and replay them through the parser helper.
 1. Capture a session to a log file (example):
 
    ```bash
-   websocat -t ws://<controller-host>:80 | tee /tmp/jellyfish_ws.log
+   websocat -t ws://<controller-host>:9000 | tee /tmp/jellyfish_ws.log
    ```
 
 2. (Optional) Keep only JSON frame lines if your capture includes non-frame noise.
