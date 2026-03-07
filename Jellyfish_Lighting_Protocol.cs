@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Text.RegularExpressions;
 using Crestron.RAD.Common.BasicDriver;
 
@@ -8,6 +8,7 @@ namespace JellyfishLighting.ExtensionDriver
 	{
 		private readonly Jellyfish_Lighting Device;
 		private readonly Jellyfish_Lighting_Transport TransportLayer;
+		private readonly object _stateLock = new object();
 
 		public Jellyfish_Lighting.UiUpdateDelegate UI_Update;
 
@@ -46,14 +47,20 @@ namespace JellyfishLighting.ExtensionDriver
 
 			if (TransportLayer.IsSocketConnected)
 			{
-				LastStatus = "Connected (WebSocket scaffold)";
-				LastOnlineState = true;
+				lock (_stateLock)
+				{
+					LastStatus = "Connected (WebSocket scaffold)";
+					LastOnlineState = true;
+				}
 				PollNow();
 			}
 			else
 			{
-				LastStatus = "Disconnected: " + TransportLayer.LastTransportError;
-				LastOnlineState = false;
+				lock (_stateLock)
+				{
+					LastStatus = "Disconnected: " + TransportLayer.LastTransportError;
+					LastOnlineState = false;
+				}
 				UI_Update?.Invoke();
 			}
 		}
@@ -62,9 +69,18 @@ namespace JellyfishLighting.ExtensionDriver
 		{
 			EnableAutoPolling = false;
 			TransportLayer.Stop();
-			LastStatus = "Disconnected";
-			LastOnlineState = false;
+			lock (_stateLock)
+			{
+				LastStatus = "Disconnected";
+				LastOnlineState = false;
+			}
 			UI_Update?.Invoke();
+		}
+
+		public void Dispose()
+		{
+			TransportLayer.ConnectionLost -= HandleTransportConnectionLost;
+			TransportLayer.ConnectionEstablished -= HandleTransportConnectionEstablished;
 		}
 
 		public void PollNow()
@@ -85,21 +101,32 @@ namespace JellyfishLighting.ExtensionDriver
 		{
 			if (state != 0 && state != 1)
 			{
-				LastStatus = "Invalid power state. Use 0 or 1.";
+				lock (_stateLock) { LastStatus = "Invalid power state. Use 0 or 1."; }
 				UI_Update?.Invoke();
 				return;
 			}
 
-			if (string.IsNullOrEmpty(LastPatternFile) || LastZoneNames == null || LastZoneNames.Length == 0)
+			string patternFile;
+			string[] zoneNames;
+			lock (_stateLock)
 			{
-				LastStatus = "Power command requires a previously selected pattern and zones.";
+				patternFile = LastPatternFile;
+				zoneNames = LastZoneNames;
+			}
+
+			if (string.IsNullOrEmpty(patternFile) || zoneNames == null || zoneNames.Length == 0)
+			{
+				lock (_stateLock) { LastStatus = "Power command requires a previously selected pattern and zones."; }
 				UI_Update?.Invoke();
 				return;
 			}
 
-			TransportLayer.SendJson(BuildRunPatternBasicCommand(LastPatternFile, LastZoneNames, state));
-			LastAckStatus = state == 1 ? "Power on command sent" : "Power off command sent";
-			UpdateLastStatus();
+			TransportLayer.SendJson(BuildRunPatternBasicCommand(patternFile, zoneNames, state));
+			lock (_stateLock)
+			{
+				LastAckStatus = state == 1 ? "Power on command sent" : "Power off command sent";
+				UpdateLastStatus();
+			}
 			UI_Update?.Invoke();
 		}
 
@@ -107,16 +134,22 @@ namespace JellyfishLighting.ExtensionDriver
 		{
 			if (!TransportLayer.IsSocketConnected)
 			{
-				LastStatus = "WebSocket not connected";
-				LastOnlineState = false;
+				lock (_stateLock)
+				{
+					LastStatus = "WebSocket not connected";
+					LastOnlineState = false;
+				}
 				UI_Update?.Invoke();
 				return;
 			}
 
 			TransportLayer.SendJson(BuildGetPatternListCommand());
 			TransportLayer.SendJson(BuildGetZoneListCommand());
-			LastAckStatus = "Polling: requested patternFileList + zones";
-			UpdateLastStatus();
+			lock (_stateLock)
+			{
+				LastAckStatus = "Polling: requested patternFileList + zones";
+				UpdateLastStatus();
+			}
 			UI_Update?.Invoke();
 		}
 
@@ -124,32 +157,41 @@ namespace JellyfishLighting.ExtensionDriver
 		{
 			if (string.IsNullOrEmpty(folder) || string.IsNullOrEmpty(patternName))
 			{
-				LastStatus = "Pattern file data requires folder and pattern name.";
+				lock (_stateLock) { LastStatus = "Pattern file data requires folder and pattern name."; }
 				UI_Update?.Invoke();
 				return;
 			}
 
-			LastPatternFile = folder + "/" + patternName;
+			lock (_stateLock) { LastPatternFile = folder + "/" + patternName; }
 			TransportLayer.SendJson(BuildGetPatternFileDataCommand(folder, patternName));
-			LastAckStatus = "Requested pattern file data.";
-			UpdateLastStatus();
+			lock (_stateLock)
+			{
+				LastAckStatus = "Requested pattern file data.";
+				UpdateLastStatus();
+			}
 			UI_Update?.Invoke();
 		}
 
 		public void RunPattern(string filePath, string[] zoneNames, int state)
 		{
-			if (!IsValidBasicRunPatternRequest(filePath, zoneNames, state, KnownZones))
+			string[] knownZones;
+			lock (_stateLock) { knownZones = KnownZones; }
+
+			if (!IsValidBasicRunPatternRequest(filePath, zoneNames, state, knownZones))
 			{
-				LastStatus = "RunPattern basic requires file, state (0/1), and at least one known zone.";
+				lock (_stateLock) { LastStatus = "RunPattern basic requires file, state (0/1), and at least one known zone."; }
 				UI_Update?.Invoke();
 				return;
 			}
 
-			LastPatternFile = filePath;
-			LastZoneNames = zoneNames;
 			TransportLayer.SendJson(BuildRunPatternBasicCommand(filePath, zoneNames, state));
-			LastAckStatus = "RunPattern basic command sent";
-			UpdateLastStatus();
+			lock (_stateLock)
+			{
+				LastPatternFile = filePath;
+				LastZoneNames = zoneNames;
+				LastAckStatus = "RunPattern basic command sent";
+				UpdateLastStatus();
+			}
 			UI_Update?.Invoke();
 		}
 
@@ -158,16 +200,19 @@ namespace JellyfishLighting.ExtensionDriver
 			string validationError;
 			if (!ValidateAdvancedPatternData(dataJson, zoneNames, state, out validationError))
 			{
-				LastStatus = "Advanced pattern validation failed: " + validationError;
+				lock (_stateLock) { LastStatus = "Advanced pattern validation failed: " + validationError; }
 				UI_Update?.Invoke();
 				return;
 			}
 
-			CachedPatternData = dataJson;
-			LastZoneNames = zoneNames;
 			TransportLayer.SendJson(BuildRunPatternAdvancedCommand(dataJson, zoneNames, state));
-			LastAckStatus = "RunPattern advanced command sent";
-			UpdateLastStatus();
+			lock (_stateLock)
+			{
+				CachedPatternData = dataJson;
+				LastZoneNames = zoneNames;
+				LastAckStatus = "RunPattern advanced command sent";
+				UpdateLastStatus();
+			}
 			UI_Update?.Invoke();
 		}
 
@@ -175,19 +220,22 @@ namespace JellyfishLighting.ExtensionDriver
 		{
 			if (brightness < 0 || brightness > 100)
 			{
-				LastStatus = "Brightness must be between 0 and 100.";
+				lock (_stateLock) { LastStatus = "Brightness must be between 0 and 100."; }
 				UI_Update?.Invoke();
 				return;
 			}
 
-			if (string.IsNullOrEmpty(CachedPatternData))
+			string cached;
+			lock (_stateLock) { cached = CachedPatternData; }
+
+			if (string.IsNullOrEmpty(cached))
 			{
-				LastStatus = "No cached pattern data. Request patternFileData first.";
+				lock (_stateLock) { LastStatus = "No cached pattern data. Request patternFileData first."; }
 				UI_Update?.Invoke();
 				return;
 			}
 
-			var updated = ReplaceIntField(CachedPatternData, "brightness", brightness);
+			var updated = ReplaceIntField(cached, "brightness", brightness);
 			ApplyAdvancedPatternData(updated, zoneNames, 1);
 		}
 
@@ -195,19 +243,22 @@ namespace JellyfishLighting.ExtensionDriver
 		{
 			if (speed < 1)
 			{
-				LastStatus = "Speed must be >= 1.";
+				lock (_stateLock) { LastStatus = "Speed must be >= 1."; }
 				UI_Update?.Invoke();
 				return;
 			}
 
-			if (string.IsNullOrEmpty(CachedPatternData))
+			string cached;
+			lock (_stateLock) { cached = CachedPatternData; }
+
+			if (string.IsNullOrEmpty(cached))
 			{
-				LastStatus = "No cached pattern data. Request patternFileData first.";
+				lock (_stateLock) { LastStatus = "No cached pattern data. Request patternFileData first."; }
 				UI_Update?.Invoke();
 				return;
 			}
 
-			var updated = ReplaceIntField(CachedPatternData, "speed", speed);
+			var updated = ReplaceIntField(cached, "speed", speed);
 			ApplyAdvancedPatternData(updated, zoneNames, 1);
 		}
 
@@ -218,54 +269,52 @@ namespace JellyfishLighting.ExtensionDriver
 				return;
 			}
 
-			var previousScene = LastScene;
+			// Parse all values into locals first — no shared state reads needed
+			string newScene = null;
+			string newPatternFile = null;
+			string newCachedPatternData = null;
+			int? newBrightness = null;
+			int? newSpeed = null;
+			string newAckStatus = null;
+			string newPowerStatus = null;
+			string newZoneSummary = null;
+			string[] newKnownZones = null;
 
 			if (json.IndexOf("\"runPattern\"", StringComparison.OrdinalIgnoreCase) >= 0)
 			{
 				var runPatternFile = ExtractString(json, "file");
 				if (!string.IsNullOrEmpty(runPatternFile))
 				{
-					LastScene = runPatternFile;
-					if (!string.IsNullOrEmpty(runPatternFile))
-					{
-						LastPatternFile = runPatternFile;
-					}
+					newScene = runPatternFile;
+					newPatternFile = runPatternFile;
 				}
 
 				var runPatternData = ExtractString(json, "data");
 				if (!string.IsNullOrEmpty(runPatternData))
 				{
-					CachedPatternData = runPatternData;
-					var parsedBrightness = ExtractInt(runPatternData, "brightness");
-					if (parsedBrightness != null)
-					{
-						LastBrightness = (int)parsedBrightness;
-					}
-					var parsedSpeed = ExtractInt(runPatternData, "speed");
-					if (parsedSpeed != null)
-					{
-						LastSpeed = (int)parsedSpeed;
-					}
+					newCachedPatternData = runPatternData;
+					newBrightness = ExtractInt(runPatternData, "brightness");
+					newSpeed = ExtractInt(runPatternData, "speed");
 				}
 
 				var runPatternZoneId = ExtractString(json, "id");
 				var runPatternZoneFromArray = ExtractFirstArrayValue(json, "zoneName");
 				var runPatternZone = !string.IsNullOrEmpty(runPatternZoneId) ? runPatternZoneId : runPatternZoneFromArray;
-				LastAckStatus = !string.IsNullOrEmpty(runPatternZone)
+				newAckStatus = !string.IsNullOrEmpty(runPatternZone)
 					? "RunPattern ack: " + runPatternZone
 					: "RunPattern update received";
 			}
 
-			var brightness = ExtractInt(json, "brightness");
-			if (brightness != null)
+			// Top-level brightness only applies when not already sourced from runPattern data
+			if (newBrightness == null)
 			{
-				LastBrightness = (int)brightness;
+				newBrightness = ExtractInt(json, "brightness");
 			}
 
 			var ledPower = ExtractBool(json, "ledPower");
 			if (ledPower != null)
 			{
-				LastPowerStatus = (bool)ledPower ? "LED power is ON" : "LED power is OFF";
+				newPowerStatus = (bool)ledPower ? "LED power is ON" : "LED power is OFF";
 			}
 
 			if (json.IndexOf("\"patternFileList\"", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -273,14 +322,18 @@ namespace JellyfishLighting.ExtensionDriver
 				int folderCount;
 				int patternCount;
 				ExtractPatternCounts(json, out folderCount, out patternCount);
-				LastAckStatus = "Pattern list received";
-				LastZoneSummary = string.Format("Folders: {0} Patterns: {1}", folderCount, patternCount);
+				// Pattern list counts go to ack status; ZoneSummary is reserved for zone names
+				newAckStatus = string.Format("Pattern list: {0} folders, {1} patterns", folderCount, patternCount);
 			}
 
 			if (json.IndexOf("\"zones\"", StringComparison.OrdinalIgnoreCase) >= 0)
 			{
-				KnownZones = ExtractZoneNames(json);
-				LastZoneSummary = string.Format("Zones: {0}", KnownZones.Length);
+				newKnownZones = ExtractZoneNames(json);
+				newZoneSummary = string.Format("Zones: {0}", newKnownZones.Length);
+				if (newAckStatus == null)
+				{
+					newAckStatus = "Zone list received";
+				}
 			}
 
 			if (json.IndexOf("\"patternFileData\"", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -288,29 +341,37 @@ namespace JellyfishLighting.ExtensionDriver
 				var patternData = ExtractString(json, "jsonData");
 				if (!string.IsNullOrEmpty(patternData))
 				{
-					CachedPatternData = patternData;
-					var parsedBrightness = ExtractInt(patternData, "brightness");
-					if (parsedBrightness != null)
-					{
-						LastBrightness = (int)parsedBrightness;
-					}
-					var parsedSpeed = ExtractInt(patternData, "speed");
-					if (parsedSpeed != null)
-					{
-						LastSpeed = (int)parsedSpeed;
-					}
+					newCachedPatternData = patternData;
+					if (newBrightness == null) newBrightness = ExtractInt(patternData, "brightness");
+					if (newSpeed == null) newSpeed = ExtractInt(patternData, "speed");
 				}
-				LastAckStatus = "Pattern file data received";
+				newAckStatus = "Pattern file data received";
 			}
 
-			LastOnlineState = true;
-			UpdateLastStatus();
-			if (string.IsNullOrEmpty(LastStatus) || LastStatus == "Disconnected")
+			// Apply all state updates atomically under the lock
+			bool sceneChanged;
+			lock (_stateLock)
 			{
-				LastStatus = "fromCtlr update received";
+				var previousScene = LastScene;
+				if (newScene != null) LastScene = newScene;
+				if (newPatternFile != null) LastPatternFile = newPatternFile;
+				if (newCachedPatternData != null) CachedPatternData = newCachedPatternData;
+				if (newBrightness != null) LastBrightness = (int)newBrightness;
+				if (newSpeed != null) LastSpeed = (int)newSpeed;
+				if (newAckStatus != null) LastAckStatus = newAckStatus;
+				if (newPowerStatus != null) LastPowerStatus = newPowerStatus;
+				if (newKnownZones != null) KnownZones = newKnownZones;
+				if (newZoneSummary != null) LastZoneSummary = newZoneSummary;
+				LastOnlineState = true;
+				UpdateLastStatus();
+				if (string.IsNullOrEmpty(LastStatus) || LastStatus == "Disconnected")
+				{
+					LastStatus = "fromCtlr update received";
+				}
+				sceneChanged = !string.Equals(previousScene, LastScene, StringComparison.OrdinalIgnoreCase);
 			}
 
-			if (!string.Equals(previousScene, LastScene, StringComparison.OrdinalIgnoreCase))
+			if (sceneChanged)
 			{
 				Device.TriggerSceneUpdatedEvent();
 			}
@@ -320,24 +381,29 @@ namespace JellyfishLighting.ExtensionDriver
 
 		private void HandleTransportConnectionLost(string reason)
 		{
-			LastOnlineState = false;
-			LastStatus = "Disconnected";
-			if (!string.IsNullOrEmpty(reason))
+			lock (_stateLock)
 			{
-				LastStatus += ": " + reason;
+				LastOnlineState = false;
+				LastStatus = "Disconnected";
+				if (!string.IsNullOrEmpty(reason))
+				{
+					LastStatus += ": " + reason;
+				}
 			}
 			UI_Update?.Invoke();
 		}
 
 		private void HandleTransportConnectionEstablished(bool isReconnect)
 		{
-			LastOnlineState = true;
-			LastStatus = isReconnect ? "Reconnected" : "Connected (WebSocket scaffold)";
-			if (isReconnect)
+			lock (_stateLock)
 			{
-				LastAckStatus = "Reconnected - resyncing patternFileList + zones";
+				LastOnlineState = true;
+				LastStatus = isReconnect ? "Reconnected" : "Connected (WebSocket scaffold)";
+				if (isReconnect)
+				{
+					LastAckStatus = "Reconnected - resyncing patternFileList + zones";
+				}
 			}
-
 			PollNow();
 			RestoreCachedStateAfterReconnect();
 			UI_Update?.Invoke();
@@ -350,26 +416,45 @@ namespace JellyfishLighting.ExtensionDriver
 				return;
 			}
 
-			if (!string.IsNullOrEmpty(CachedPatternData) && LastZoneNames != null && LastZoneNames.Length > 0)
+			string cachedData;
+			string patternFile;
+			string[] zoneNames;
+			string powerStatus;
+			lock (_stateLock)
 			{
-				var restoreState = string.Equals(LastPowerStatus, "LED power is OFF", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
-				TransportLayer.SendJson(BuildRunPatternAdvancedCommand(CachedPatternData, LastZoneNames, restoreState));
-				LastAckStatus = "Reconnected - restored cached pattern state";
-				UpdateLastStatus();
+				cachedData = CachedPatternData;
+				patternFile = LastPatternFile;
+				zoneNames = LastZoneNames;
+				powerStatus = LastPowerStatus;
+			}
+
+			var restoreState = string.Equals(powerStatus, "LED power is OFF", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+
+			if (!string.IsNullOrEmpty(cachedData) && zoneNames != null && zoneNames.Length > 0)
+			{
+				TransportLayer.SendJson(BuildRunPatternAdvancedCommand(cachedData, zoneNames, restoreState));
+				lock (_stateLock)
+				{
+					LastAckStatus = "Reconnected - restored cached pattern state";
+					UpdateLastStatus();
+				}
 				return;
 			}
 
-			if (!string.IsNullOrEmpty(LastPatternFile) && LastZoneNames != null && LastZoneNames.Length > 0)
+			if (!string.IsNullOrEmpty(patternFile) && zoneNames != null && zoneNames.Length > 0)
 			{
-				var restoreState = string.Equals(LastPowerStatus, "LED power is OFF", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
-				TransportLayer.SendJson(BuildRunPatternBasicCommand(LastPatternFile, LastZoneNames, restoreState));
-				LastAckStatus = "Reconnected - restored last runPattern state";
-				UpdateLastStatus();
+				TransportLayer.SendJson(BuildRunPatternBasicCommand(patternFile, zoneNames, restoreState));
+				lock (_stateLock)
+				{
+					LastAckStatus = "Reconnected - restored last runPattern state";
+					UpdateLastStatus();
+				}
 			}
 		}
 
 		private void UpdateLastStatus()
 		{
+			// Must be called under _stateLock
 			if (!string.IsNullOrEmpty(LastPowerStatus))
 			{
 				LastStatus = LastPowerStatus;
@@ -431,7 +516,7 @@ namespace JellyfishLighting.ExtensionDriver
 				var matched = false;
 				for (var j = 0; j < knownZones.Length; j++)
 				{
-					if (string.Equals(zoneNames[i], knownZones[j], StringComparison.Ordinal))
+					if (string.Equals(zoneNames[i], knownZones[j], StringComparison.OrdinalIgnoreCase))
 					{
 						matched = true;
 						break;
@@ -622,8 +707,18 @@ namespace JellyfishLighting.ExtensionDriver
 
 		private static string ExtractString(string json, string key)
 		{
-			var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*\\\"(?<v>[^\\\"]*)\\\"", RegexOptions.IgnoreCase);
-			return match.Success ? match.Groups["v"].Value : null;
+			var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*\\\"(?<v>(?:[^\\\"\\\\]|\\\\.)*)\\\"", RegexOptions.IgnoreCase);
+			return match.Success ? Unescape(match.Groups["v"].Value) : null;
+		}
+
+		private static string Unescape(string value)
+		{
+			if (string.IsNullOrEmpty(value))
+			{
+				return value;
+			}
+
+			return value.Replace("\\\\", "\\").Replace("\\\"", "\"");
 		}
 
 		private static int? ExtractInt(string json, string key)

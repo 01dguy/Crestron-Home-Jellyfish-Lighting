@@ -7,14 +7,14 @@
     <layout id="MainPage" title="^MainPageTitle" isdefaultlayout="#true">
       <controls>
         <textdisplay id="StatusTextId" title="^StatusTextLabel" line1label="{StatusText}" line2label="{ZoneSummary}"/>
-        <textdisplay id="OnlineTextId" title="^OnlineLabel" line1label="{IsOnline}" line2label="{Brightness}"/>
+        <textdisplay id="OnlineTextId" title="^OnlineLabel" line1label="{ActiveScene}" line2label="{Brightness}"/>
         <textdisplay id="SpeedTextId" title="^SpeedLabel" line1label="{Speed}"/>
         <subheader id="ControlsSubheader" label="^CommonActionsSubheaderLabel"/>
         <controlgroup>
-          <textentry id="PatternPathId" label="^PatternPathLabel" secondarylabel="^PatternPathHelpText" value="{PatternPath}"/>
-          <textentry id="SelectedZonesId" label="^SelectedZonesLabel" secondarylabel="^SelectedZonesHelpText" value="{SelectedZones}"/>
-          <textentry id="RequestedBrightnessId" label="^RequestedBrightnessLabel" secondarylabel="^RequestedBrightnessHelpText" value="{RequestedBrightness}" numericinputonly="#true"/>
-          <textentry id="RequestedSpeedId" label="^RequestedSpeedLabel" secondarylabel="^RequestedSpeedHelpText" value="{RequestedSpeed}" numericinputonly="#true"/>
+          <textentry id="PatternPathId" label="^PatternPathLabel" value="{PatternPath}"/>
+          <textentry id="SelectedZonesId" label="^SelectedZonesLabel" value="{SelectedZones}"/>
+          <textentry id="RequestedBrightnessId" label="^RequestedBrightnessLabel" value="{RequestedBrightness}" numericinputonly="#true"/>
+          <textentry id="RequestedSpeedId" label="^RequestedSpeedLabel" value="{RequestedSpeed}" numericinputonly="#true"/>
         </controlgroup>
         <button id="RefreshButtonId" label="^RefreshNowLabel" action="command:RefreshNow"/>
         <button id="GetPatternsButtonId" label="^GetPatternsAndZonesLabel" action="command:GetPatternsAndZones"/>

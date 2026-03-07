@@ -1,7 +1,7 @@
 {
   "MainPageTitle": "JellyFish Lighting",
   "StatusTextLabel": "Status / Zones",
-  "OnlineLabel": "Online / Brightness",
+  "OnlineLabel": "Scene / Brightness",
   "SettingsPageTitle": "Settings",
   "PollingSubheaderLabel": "WebSocket Polling",
   "UseSslLabel": "Use WSS",

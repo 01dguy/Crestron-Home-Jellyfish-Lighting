@@ -14,7 +14,7 @@ namespace JellyfishLighting.ExtensionDriver
 		public Action<bool> ConnectionEstablished;
 		public Jellyfish_Lighting Device;
 
-		public bool IsSocketConnected;
+		public volatile bool IsSocketConnected;
 		public string ControllerHost = string.Empty;
 		public int ControllerPort = 9000;
 		public bool UseSsl;
@@ -300,9 +300,8 @@ namespace JellyfishLighting.ExtensionDriver
 			{
 				IsSocketConnected = false;
 				IsConnected = false;
+				ConnectionLost?.Invoke(LastTransportError);
 			}
-
-			ConnectionLost?.Invoke(LastTransportError);
 		}
 
 		private void StartReconnectLoop()
