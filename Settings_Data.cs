@@ -7,7 +7,7 @@
 
 		public Settings_Data()
 		{
-			UseSsl = true;
+			UseSsl = false;
 			PollIntervalSeconds = 60;
 		}
 

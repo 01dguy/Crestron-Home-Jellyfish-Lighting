@@ -33,6 +33,8 @@ namespace JellyfishLighting.ExtensionDriver
 			Transport = transport;
 			TransportLayer = transport;
 			Device = transport.Device;
+			TransportLayer.ConnectionLost += HandleTransportConnectionLost;
+			TransportLayer.ConnectionEstablished += HandleTransportConnectionEstablished;
 		}
 
 		public void Start()
@@ -314,6 +316,56 @@ namespace JellyfishLighting.ExtensionDriver
 			}
 
 			UI_Update?.Invoke();
+		}
+
+		private void HandleTransportConnectionLost(string reason)
+		{
+			LastOnlineState = false;
+			LastStatus = "Disconnected";
+			if (!string.IsNullOrEmpty(reason))
+			{
+				LastStatus += ": " + reason;
+			}
+			UI_Update?.Invoke();
+		}
+
+		private void HandleTransportConnectionEstablished(bool isReconnect)
+		{
+			LastOnlineState = true;
+			LastStatus = isReconnect ? "Reconnected" : "Connected (WebSocket scaffold)";
+			if (isReconnect)
+			{
+				LastAckStatus = "Reconnected - resyncing patternFileList + zones";
+			}
+
+			PollNow();
+			RestoreCachedStateAfterReconnect();
+			UI_Update?.Invoke();
+		}
+
+		private void RestoreCachedStateAfterReconnect()
+		{
+			if (!TransportLayer.IsSocketConnected)
+			{
+				return;
+			}
+
+			if (!string.IsNullOrEmpty(CachedPatternData) && LastZoneNames != null && LastZoneNames.Length > 0)
+			{
+				var restoreState = string.Equals(LastPowerStatus, "LED power is OFF", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+				TransportLayer.SendJson(BuildRunPatternAdvancedCommand(CachedPatternData, LastZoneNames, restoreState));
+				LastAckStatus = "Reconnected - restored cached pattern state";
+				UpdateLastStatus();
+				return;
+			}
+
+			if (!string.IsNullOrEmpty(LastPatternFile) && LastZoneNames != null && LastZoneNames.Length > 0)
+			{
+				var restoreState = string.Equals(LastPowerStatus, "LED power is OFF", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+				TransportLayer.SendJson(BuildRunPatternBasicCommand(LastPatternFile, LastZoneNames, restoreState));
+				LastAckStatus = "Reconnected - restored last runPattern state";
+				UpdateLastStatus();
+			}
 		}
 
 		private void UpdateLastStatus()

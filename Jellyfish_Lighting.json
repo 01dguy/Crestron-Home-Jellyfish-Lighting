@@ -55,7 +55,7 @@
         "TypeName": "Custom",
         "ParameterId": "ControllerHost",
         "Label": "Controller Host",
-        "Description": "JellyFish controller hostname or IP (for WebSocket)",
+        "Description": "Required: JellyFish controller hostname or IP for websocket connection",
         "Persistent": true,
         "RequiredForConnection": "Before",
         "Data": {
