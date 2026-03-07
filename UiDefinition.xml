@@ -32,6 +32,7 @@
         <subheader id="PollingSubheader" label="^PollingSubheaderLabel"/>
         <controlgroup>
           <checkbox id="UseSslId" label="^UseSslLabel" secondarylabel="^UseSslSecondaryLabel" value="{UseSsl}"/>
+          <textentry id="HostId" label="^HostLabel" value="{Host}"/>
           <textentry id="PollIntervalId" label="^PollIntervalLabel" value="{PollIntervalSeconds}" numericinputonly="#true"/>
         </controlgroup>
         <button id="SaveButtonId" label="^SaveButtonName" action="command:SaveSettings"/>
