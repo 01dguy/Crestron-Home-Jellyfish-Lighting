@@ -84,7 +84,7 @@ Use `websocat` to capture real frames and replay them through the parser helper.
 ## Notes
 
 - Real socket connect/read/write remains TODO in transport; protocol and payload handling are now aligned with captured real responses.
-- Metadata default communication port is set to `80` (legacy arbitrary `2345` removed).
+- Metadata default communication port is set to `9000` for current controller/API Explorer usage.
 
 ## Next production step
 

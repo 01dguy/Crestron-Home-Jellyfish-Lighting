@@ -21,7 +21,7 @@ namespace JellyfishLighting.ExtensionDriver
 		public string LastZoneSummary = "Unknown";
 
 		private string ControllerHost = string.Empty;
-		private int ControllerPort = 80;
+		private int ControllerPort = 9000;
 
 		private string LastPatternFile = string.Empty;
 		private string[] LastZoneNames = new string[0];
@@ -44,7 +44,13 @@ namespace JellyfishLighting.ExtensionDriver
 			ApplyTransportConfiguration();
 			TransportLayer.Start();
 
-			if (!TransportLayer.IsSocketConnected)
+			if (TransportLayer.IsSocketConnected)
+			{
+				LastStatus = "Connected (WebSocket scaffold)";
+				LastOnlineState = true;
+				PollNow();
+			}
+			else
 			{
 				LastStatus = "Disconnected: " + TransportLayer.LastTransportError;
 				LastOnlineState = false;
@@ -659,7 +665,7 @@ namespace JellyfishLighting.ExtensionDriver
 		private static int ToPort(string value)
 		{
 			int parsed;
-			return int.TryParse(value, out parsed) && parsed > 0 ? parsed : 80;
+			return int.TryParse(value, out parsed) && parsed > 0 ? parsed : 9000;
 		}
 
 		private void ApplyTransportConfiguration()

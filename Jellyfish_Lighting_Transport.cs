@@ -16,7 +16,7 @@ namespace JellyfishLighting.ExtensionDriver
 
 		public bool IsSocketConnected;
 		public string ControllerHost = string.Empty;
-		public int ControllerPort = 80;
+		public int ControllerPort = 9000;
 		public bool UseSsl;
 		public string LastTransportError = string.Empty;
 
@@ -39,7 +39,7 @@ namespace JellyfishLighting.ExtensionDriver
 		public void Configure(string host, int port, bool useSsl)
 		{
 			ControllerHost = host ?? string.Empty;
-			ControllerPort = port <= 0 ? 80 : port;
+			ControllerPort = port <= 0 ? 9000 : port;
 			UseSsl = useSsl;
 		}
 
