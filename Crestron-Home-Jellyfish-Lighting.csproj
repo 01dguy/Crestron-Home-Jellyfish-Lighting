@@ -152,7 +152,9 @@
     <Compile Include="Settings_Data.cs" />
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include="IncludeInPkg\Translations\en-US.json" />
+    <Content Include="IncludeInPkg\Translations\en-US.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <EmbeddedResource Include="Jellyfish_Lighting.json" />
     <None Include="packages.config" />
     <None Include="README.md" />
