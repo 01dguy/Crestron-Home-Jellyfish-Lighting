@@ -26,5 +26,6 @@
   "RequestPatternDataLabel": "Request pattern data",
   "RunSelectedPatternLabel": "Run selected pattern",
   "SetSelectedBrightnessLabel": "Set brightness",
-  "SetSelectedSpeedLabel": "Set speed"
+  "SetSelectedSpeedLabel": "Set speed",
+  "HostLabel": "Jellyfish Controller IP"
 }
