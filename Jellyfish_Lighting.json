@@ -25,7 +25,7 @@
     },
     "Api": {
       "Communication": {
-        "CommunicationType": 5,
+        "CommunicationType": 1,
         "Protocol": -1,
         "Baud": -1,
         "Parity": -1,
