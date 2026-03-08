@@ -152,14 +152,14 @@
     <Compile Include="Settings_Data.cs" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="en-US.json" />
+    <None Include="IncludeInPkg\Translations\en-US.json" />
     <None Include="Jellyfish_Lighting.json" />
     <None Include="packages.config" />
     <None Include="README.md" />
   </ItemGroup>
   <ItemGroup>
     <Content Include=".gitignore" />
-    <Content Include="UiDefinition.xml">
+    <Content Include="IncludeInPkg\UiDefinitions\UiDefinition.xml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
