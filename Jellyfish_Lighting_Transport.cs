@@ -7,365 +7,430 @@ using Crestron.RAD.Common.Transports;
 
 namespace JellyfishLighting.ExtensionDriver
 {
-	public class Jellyfish_Lighting_Transport : ATransportDriver
-	{
-		public Action<string> InboundJsonReceived;
-		public Action<string> ConnectionLost;
-		public Action<bool> ConnectionEstablished;
-		public Jellyfish_Lighting Device;
+    public class Jellyfish_Lighting_Transport : ATransportDriver
+    {
+        public Action<string> InboundJsonReceived;
+        public Action<string> ConnectionLost;
+        public Action<bool> ConnectionEstablished;
+        public Jellyfish_Lighting Device;
 
-		public volatile bool IsSocketConnected;
-		public string ControllerHost = string.Empty;
-		public int ControllerPort = 9000;
-		public bool UseSsl;
-		public string LastTransportError = string.Empty;
+        public volatile bool IsSocketConnected;
+        public string ControllerHost = string.Empty;
+        public int ControllerPort = 9000;
 
-		private readonly object SocketSyncRoot = new object();
-		private ClientWebSocket Socket;
-		private CancellationTokenSource ReceiveLoopCancellation;
-		private Task ReceiveLoopTask;
-		private int ConnectionGeneration;
-		private int ReconnectInProgress;
-		private bool IsStopping;
-		private static readonly int[] ReconnectBackoffSeconds = { 1, 2, 5 };
+        // CHANGED:
+        // Kept field for compatibility, but transport now forces ws:// only.
+        public bool UseSsl;
 
-		public Jellyfish_Lighting_Transport(Jellyfish_Lighting device)
-		{
-			IsEthernetTransport = true;
-			IsConnected = false;
-			Device = device;
-		}
+        public string LastTransportError = string.Empty;
 
-		public void Configure(string host, int port, bool useSsl)
-		{
-			ControllerHost = host ?? string.Empty;
-			ControllerPort = port <= 0 ? 9000 : port;
-			UseSsl = useSsl;
-		}
+        private readonly object SocketSyncRoot = new object();
+        private ClientWebSocket Socket;
+        private CancellationTokenSource ReceiveLoopCancellation;
+        private Task ReceiveLoopTask;
+        private int ConnectionGeneration;
+        private int ReconnectInProgress;
+        private bool IsStopping;
 
-		public string GetSocketUri()
-		{
-			var scheme = UseSsl ? "wss" : "ws";
-			return string.Format("{0}://{1}:{2}", scheme, ControllerHost, ControllerPort);
-		}
+        // CHANGED:
+        // Endless reconnect with capped backoff.
+        // Sequence: 1s, 2s, 5s, 10s, 30s, 60s, then 60s forever.
+        private static readonly int[] ReconnectBackoffSeconds = { 1, 2, 5, 10, 30, 60 };
 
-		public override void Start()
-		{
-			IsStopping = false;
-			Stop();
-			IsStopping = false;
+        public Jellyfish_Lighting_Transport(Jellyfish_Lighting device)
+        {
+            IsEthernetTransport = true;
+            IsConnected = false;
+            Device = device;
+        }
 
-			ConnectSocket(false);
-		}
+        public void Configure(string host, int port, bool useSsl)
+        {
+            ControllerHost = host ?? string.Empty;
+            ControllerPort = port <= 0 ? 9000 : port;
 
-		private bool ConnectSocket(bool isReconnectAttempt)
-		{
-			var generation = Interlocked.Increment(ref ConnectionGeneration);
+            // CHANGED:
+            // Force ws:// only. Ignore any upstream SSL input.
+            UseSsl = false;
 
-			if (string.IsNullOrEmpty(ControllerHost))
-			{
-				LastTransportError = "ControllerHost is required.";
-				SetOfflineState(LastTransportError, generation);
-				Log("JellyfishLighting - transport start failed: " + LastTransportError);
-				return false;
-			}
+            // TEST LOG:
+            // Shows what runtime configuration actually reached transport.
+            Log("JellyfishLighting - Transport.Configure host=" + ControllerHost +
+                " port=" + ControllerPort +
+                " useSsl(requested)=" + useSsl +
+                " useSsl(applied)=false");
+        }
 
-			var socketUriText = GetSocketUri();
-			Uri socketUri;
-			if (!Uri.TryCreate(socketUriText, UriKind.Absolute, out socketUri) ||
-				(socketUri.Scheme != "ws" && socketUri.Scheme != "wss"))
-			{
-				LastTransportError = "Invalid websocket uri: " + socketUriText;
-				SetOfflineState(LastTransportError, generation);
-				Log("JellyfishLighting - transport start failed: " + LastTransportError);
-				return false;
-			}
+        public string GetSocketUri()
+        {
+            // CHANGED:
+            // Always use ws://. Never attempt wss://.
+            return string.Format("ws://{0}:{1}", ControllerHost, ControllerPort);
+        }
 
-			var socket = new ClientWebSocket();
-			var cancellation = new CancellationTokenSource();
-			try
-			{
-				LastTransportError = string.Empty;
-				Log("JellyfishLighting - transport " + (isReconnectAttempt ? "reconnect" : "start") + " requested for " + socketUri);
-				socket.ConnectAsync(socketUri, cancellation.Token).Wait();
+        public override void Start()
+        {
+            // CHANGED:
+            // Old version toggled IsStopping before/after Stop() in a messy way.
+            // This is cleaner and makes startup state easier to reason about.
+            Stop();
+            IsStopping = false;
 
-				if (socket.State != WebSocketState.Open)
-				{
-					throw new InvalidOperationException("Socket state after connect was " + socket.State);
-				}
+            // TEST LOG:
+            // Confirms the final URI input before connection begins.
+            Log("JellyfishLighting - Transport.Start host=" + ControllerHost +
+                " port=" + ControllerPort +
+                " uri=" + GetSocketUri());
 
-				lock (SocketSyncRoot)
-				{
-					Socket = socket;
-					ReceiveLoopCancellation = cancellation;
-					IsSocketConnected = true;
-					IsConnected = true;
-				}
+            ConnectSocket(false);
+        }
 
-				ReceiveLoopTask = Task.Run(() => ReceiveLoopAsync(socket, cancellation.Token, generation));
-				ConnectionEstablished?.Invoke(isReconnectAttempt);
-				return true;
-			}
-			catch (Exception ex)
-			{
-				LastTransportError = ex.Message;
-				Log("JellyfishLighting - transport " + (isReconnectAttempt ? "reconnect" : "start") + " failed: " + LastTransportError);
-				try
-				{
-					socket.Dispose();
-				}
-				catch
-				{
-				}
-				cancellation.Dispose();
-				SetOfflineState(LastTransportError, generation);
-				return false;
-			}
-		}
+        private bool ConnectSocket(bool isReconnectAttempt)
+        {
+            var generation = Interlocked.Increment(ref ConnectionGeneration);
 
-		public override void Stop()
-		{
-			IsStopping = true;
-			Log("JellyfishLighting - transport stop requested.");
+            if (string.IsNullOrEmpty(ControllerHost))
+            {
+                LastTransportError = "ControllerHost is required.";
+                SetOfflineState(LastTransportError, generation);
+                Log("JellyfishLighting - transport " +
+                    (isReconnectAttempt ? "reconnect" : "start") +
+                    " failed: " + LastTransportError);
+                return false;
+            }
 
-			ClientWebSocket socketToClose;
-			CancellationTokenSource cancellationToDispose;
-			Task receiveLoopToWait;
+            var socketUriText = GetSocketUri();
 
-			lock (SocketSyncRoot)
-			{
-				Interlocked.Increment(ref ConnectionGeneration);
-				socketToClose = Socket;
-				cancellationToDispose = ReceiveLoopCancellation;
-				receiveLoopToWait = ReceiveLoopTask;
+            // TEST LOG:
+            // Verifies the exact URI being attempted.
+            Log("JellyfishLighting - final socket uri: " + socketUriText);
 
-				Socket = null;
-				ReceiveLoopCancellation = null;
-				ReceiveLoopTask = null;
-				IsSocketConnected = false;
-				IsConnected = false;
-			}
+            Uri socketUri;
+            if (!Uri.TryCreate(socketUriText, UriKind.Absolute, out socketUri) ||
+                socketUri.Scheme != "ws")
+            {
+                // CHANGED:
+                // Since ws:// is now forced, only ws is valid.
+                LastTransportError = "Invalid websocket uri: " + socketUriText;
+                SetOfflineState(LastTransportError, generation);
+                Log("JellyfishLighting - transport " +
+                    (isReconnectAttempt ? "reconnect" : "start") +
+                    " failed: " + LastTransportError);
+                return false;
+            }
 
-			if (cancellationToDispose != null)
-			{
-				try
-				{
-					cancellationToDispose.Cancel();
-				}
-				catch
-				{
-				}
-			}
+            var socket = new ClientWebSocket();
+            var cancellation = new CancellationTokenSource();
 
-			if (socketToClose != null)
-			{
-				try
-				{
-					if (socketToClose.State == WebSocketState.Open || socketToClose.State == WebSocketState.CloseReceived)
-					{
-						socketToClose.CloseAsync(WebSocketCloseStatus.NormalClosure, "Driver stop", CancellationToken.None).Wait();
-					}
-				}
-				catch (Exception ex)
-				{
-					LastTransportError = ex.Message;
-					Log("JellyfishLighting - socket close failed: " + LastTransportError);
-				}
-				finally
-				{
-					socketToClose.Dispose();
-				}
-			}
+            try
+            {
+                LastTransportError = string.Empty;
 
-			if (receiveLoopToWait != null)
-			{
-				try
-				{
-					receiveLoopToWait.Wait(2000);
-				}
-				catch
-				{
-				}
-			}
+                Log("JellyfishLighting - transport " +
+                    (isReconnectAttempt ? "reconnect" : "start") +
+                    " requested for " + socketUri);
 
-			if (cancellationToDispose != null)
-			{
-				cancellationToDispose.Dispose();
-			}
+                socket.ConnectAsync(socketUri, cancellation.Token).Wait();
 
-			IsSocketConnected = false;
-			IsConnected = false;
-			Interlocked.Exchange(ref ReconnectInProgress, 0);
-		}
+                if (socket.State != WebSocketState.Open)
+                {
+                    throw new InvalidOperationException("Socket state after connect was " + socket.State);
+                }
 
-		public override void SendMethod(string message, object[] parameters)
-		{
-			ClientWebSocket socket;
-			lock (SocketSyncRoot)
-			{
-				socket = Socket;
-			}
+                lock (SocketSyncRoot)
+                {
+                    Socket = socket;
+                    ReceiveLoopCancellation = cancellation;
+                    IsSocketConnected = true;
+                    IsConnected = true;
+                }
 
-			if (!IsSocketConnected || socket == null || socket.State != WebSocketState.Open)
-			{
-				Log("JellyfishLighting - SendMethod ignored (socket not connected)");
-				return;
-			}
+                Log("JellyfishLighting - websocket connected successfully.");
 
-			try
-			{
-				var payload = Encoding.UTF8.GetBytes(message);
-				socket.SendAsync(new ArraySegment<byte>(payload), WebSocketMessageType.Text, true, CancellationToken.None).Wait();
-				Log("JellyfishLighting TX: " + message);
-			}
-			catch (Exception ex)
-			{
-				LastTransportError = ex.Message;
-				Log("JellyfishLighting - SendMethod failed: " + LastTransportError);
-				HandleConnectionLoss("Send failed: " + LastTransportError, ConnectionGeneration);
-			}
-		}
+                ReceiveLoopTask = Task.Run(() => ReceiveLoopAsync(socket, cancellation.Token, generation));
+                ConnectionEstablished?.Invoke(isReconnectAttempt);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastTransportError = ex.Message;
+                Log("JellyfishLighting - transport " +
+                    (isReconnectAttempt ? "reconnect" : "start") +
+                    " failed: " + LastTransportError);
 
-		private async Task ReceiveLoopAsync(ClientWebSocket socket, CancellationToken cancellationToken, int generation)
-		{
-			var buffer = new byte[4096];
-			var textBuilder = new StringBuilder();
+                try
+                {
+                    socket.Dispose();
+                }
+                catch
+                {
+                }
 
-			try
-			{
-				while (!cancellationToken.IsCancellationRequested && socket.State == WebSocketState.Open)
-				{
-					var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken).ConfigureAwait(false);
+                cancellation.Dispose();
+                SetOfflineState(LastTransportError, generation);
+                return false;
+            }
+        }
 
-					if (result.MessageType == WebSocketMessageType.Close)
-					{
-						HandleConnectionLoss("Socket closed by remote endpoint.", generation);
-						break;
-					}
+        public override void Stop()
+        {
+            IsStopping = true;
+            Log("JellyfishLighting - transport stop requested.");
 
-					if (result.MessageType != WebSocketMessageType.Text)
-					{
-						continue;
-					}
+            ClientWebSocket socketToClose;
+            CancellationTokenSource cancellationToDispose;
+            Task receiveLoopToWait;
 
-					textBuilder.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
+            lock (SocketSyncRoot)
+            {
+                Interlocked.Increment(ref ConnectionGeneration);
 
-					if (!result.EndOfMessage)
-					{
-						continue;
-					}
+                socketToClose = Socket;
+                cancellationToDispose = ReceiveLoopCancellation;
+                receiveLoopToWait = ReceiveLoopTask;
 
-					var inboundJson = textBuilder.ToString();
-					textBuilder.Length = 0;
-					ReceiveJsonFromSocket(inboundJson);
-				}
-			}
-			catch (OperationCanceledException)
-			{
-			}
-			catch (Exception ex)
-			{
-				HandleConnectionLoss("Receive loop failed: " + ex.Message, generation);
-			}
-			finally
-			{
-				if (generation == ConnectionGeneration)
-				{
-					IsSocketConnected = false;
-					IsConnected = false;
-				}
-			}
-		}
+                Socket = null;
+                ReceiveLoopCancellation = null;
+                ReceiveLoopTask = null;
+                IsSocketConnected = false;
+                IsConnected = false;
+            }
 
-		private void HandleConnectionLoss(string reason, int generation)
-		{
-			SetOfflineState(reason, generation);
+            if (cancellationToDispose != null)
+            {
+                try
+                {
+                    cancellationToDispose.Cancel();
+                }
+                catch
+                {
+                }
+            }
 
-			if (IsStopping)
-			{
-				return;
-			}
+            if (socketToClose != null)
+            {
+                try
+                {
+                    if (socketToClose.State == WebSocketState.Open || socketToClose.State == WebSocketState.CloseReceived)
+                    {
+                        socketToClose.CloseAsync(
+                            WebSocketCloseStatus.NormalClosure,
+                            "Driver stop",
+                            CancellationToken.None).Wait();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LastTransportError = ex.Message;
+                    Log("JellyfishLighting - socket close failed: " + LastTransportError);
+                }
+                finally
+                {
+                    socketToClose.Dispose();
+                }
+            }
 
-			StartReconnectLoop();
-		}
+            if (receiveLoopToWait != null)
+            {
+                try
+                {
+                    receiveLoopToWait.Wait(2000);
+                }
+                catch
+                {
+                }
+            }
 
-		private void SetOfflineState(string reason, int generation)
-		{
-			if (!string.IsNullOrEmpty(reason))
-			{
-				LastTransportError = reason;
-			}
+            if (cancellationToDispose != null)
+            {
+                cancellationToDispose.Dispose();
+            }
 
-			if (generation == ConnectionGeneration)
-			{
-				IsSocketConnected = false;
-				IsConnected = false;
-				ConnectionLost?.Invoke(LastTransportError);
-			}
-		}
+            IsSocketConnected = false;
+            IsConnected = false;
+            Interlocked.Exchange(ref ReconnectInProgress, 0);
+        }
 
-		private void StartReconnectLoop()
-		{
-			if (Interlocked.CompareExchange(ref ReconnectInProgress, 1, 0) != 0)
-			{
-				return;
-			}
+        public override void SendMethod(string message, object[] parameters)
+        {
+            ClientWebSocket socket;
+            lock (SocketSyncRoot)
+            {
+                socket = Socket;
+            }
 
-			Task.Run(async () =>
-			{
-				try
-				{
-					for (var i = 0; i < ReconnectBackoffSeconds.Length; i++)
-					{
-						if (IsStopping)
-						{
-							return;
-						}
+            if (!IsSocketConnected || socket == null || socket.State != WebSocketState.Open)
+            {
+                Log("JellyfishLighting - SendMethod ignored (socket not connected)");
+                return;
+            }
 
-						var delaySeconds = ReconnectBackoffSeconds[i];
-						Log("JellyfishLighting - reconnect attempt " + (i + 1) + " in " + delaySeconds + "s");
-						await Task.Delay(TimeSpan.FromSeconds(delaySeconds)).ConfigureAwait(false);
+            try
+            {
+                var payload = Encoding.UTF8.GetBytes(message);
+                socket.SendAsync(
+                    new ArraySegment<byte>(payload),
+                    WebSocketMessageType.Text,
+                    true,
+                    CancellationToken.None).Wait();
 
-						if (IsStopping)
-						{
-							return;
-						}
+                Log("JellyfishLighting TX: " + message);
+            }
+            catch (Exception ex)
+            {
+                LastTransportError = ex.Message;
+                Log("JellyfishLighting - SendMethod failed: " + LastTransportError);
+                HandleConnectionLoss("Send failed: " + LastTransportError, ConnectionGeneration);
+            }
+        }
 
-						if (ConnectSocket(true))
-						{
-							Log("JellyfishLighting - reconnect successful.");
-							return;
-						}
-					}
+        private async Task ReceiveLoopAsync(ClientWebSocket socket, CancellationToken cancellationToken, int generation)
+        {
+            var buffer = new byte[4096];
+            var textBuilder = new StringBuilder();
 
-					Log("JellyfishLighting - reconnect failed after max retries. Last error: " + LastTransportError);
-				}
-				finally
-				{
-					Interlocked.Exchange(ref ReconnectInProgress, 0);
-				}
-			});
-		}
+            try
+            {
+                while (!cancellationToken.IsCancellationRequested && socket.State == WebSocketState.Open)
+                {
+                    var result = await socket.ReceiveAsync(
+                        new ArraySegment<byte>(buffer),
+                        cancellationToken).ConfigureAwait(false);
 
-		public void SendJson(string json)
-		{
-			if (string.IsNullOrEmpty(json))
-			{
-				return;
-			}
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        HandleConnectionLoss("Socket closed by remote endpoint.", generation);
+                        break;
+                    }
 
-			SendMethod(json, null);
-		}
+                    if (result.MessageType != WebSocketMessageType.Text)
+                    {
+                        continue;
+                    }
 
-		public void ReceiveJsonFromSocket(string json)
-		{
-			if (string.IsNullOrEmpty(json))
-			{
-				return;
-			}
+                    textBuilder.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
 
-			Log("JellyfishLighting RX: " + json);
-			InboundJsonReceived?.Invoke(json);
-		}
-	}
+                    if (!result.EndOfMessage)
+                    {
+                        continue;
+                    }
+
+                    var inboundJson = textBuilder.ToString();
+                    textBuilder.Length = 0;
+                    ReceiveJsonFromSocket(inboundJson);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                HandleConnectionLoss("Receive loop failed: " + ex.Message, generation);
+            }
+            finally
+            {
+                if (generation == ConnectionGeneration)
+                {
+                    IsSocketConnected = false;
+                    IsConnected = false;
+                }
+            }
+        }
+
+        private void HandleConnectionLoss(string reason, int generation)
+        {
+            SetOfflineState(reason, generation);
+
+            if (IsStopping)
+            {
+                return;
+            }
+
+            StartReconnectLoop();
+        }
+
+        private void SetOfflineState(string reason, int generation)
+        {
+            if (!string.IsNullOrEmpty(reason))
+            {
+                LastTransportError = reason;
+            }
+
+            if (generation == ConnectionGeneration)
+            {
+                IsSocketConnected = false;
+                IsConnected = false;
+                ConnectionLost?.Invoke(LastTransportError);
+            }
+        }
+
+        private void StartReconnectLoop()
+        {
+            if (Interlocked.CompareExchange(ref ReconnectInProgress, 1, 0) != 0)
+            {
+                return;
+            }
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    var attempt = 0;
+
+                    while (!IsStopping)
+                    {
+                        var index = attempt < ReconnectBackoffSeconds.Length
+                            ? attempt
+                            : ReconnectBackoffSeconds.Length - 1;
+
+                        var delaySeconds = ReconnectBackoffSeconds[index];
+
+                        Log("JellyfishLighting - reconnect attempt " + (attempt + 1) +
+                            " in " + delaySeconds + "s");
+
+                        await Task.Delay(TimeSpan.FromSeconds(delaySeconds)).ConfigureAwait(false);
+
+                        if (IsStopping)
+                        {
+                            return;
+                        }
+
+                        if (ConnectSocket(true))
+                        {
+                            Log("JellyfishLighting - reconnect successful.");
+                            return;
+                        }
+
+                        Log("JellyfishLighting - reconnect attempt failed. Last error: " + LastTransportError);
+                        attempt++;
+                    }
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref ReconnectInProgress, 0);
+                }
+            });
+        }
+
+        public void SendJson(string json)
+        {
+            if (string.IsNullOrEmpty(json))
+            {
+                return;
+            }
+
+            SendMethod(json, null);
+        }
+
+        public void ReceiveJsonFromSocket(string json)
+        {
+            if (string.IsNullOrEmpty(json))
+            {
+                return;
+            }
+
+            Log("JellyfishLighting RX: " + json);
+            InboundJsonReceived?.Invoke(json);
+        }
+    }
 }

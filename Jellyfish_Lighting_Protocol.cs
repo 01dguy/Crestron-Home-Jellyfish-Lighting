@@ -4,792 +4,898 @@ using Crestron.RAD.Common.BasicDriver;
 
 namespace JellyfishLighting.ExtensionDriver
 {
-	public class Jellyfish_Lighting_Protocol : ABaseDriverProtocol, IDisposable
-	{
-		private readonly Jellyfish_Lighting Device;
-		private readonly Jellyfish_Lighting_Transport TransportLayer;
-		private readonly object _stateLock = new object();
-
-		public Jellyfish_Lighting.UiUpdateDelegate UI_Update;
-
-		public string LastStatus = "Disconnected";
-		public string LastAckStatus = "";
-		public string LastPowerStatus = "";
-		public bool LastOnlineState;
-		public string LastScene = "Unknown";
-		public int LastBrightness;
-		public int LastSpeed;
-		public string LastZoneSummary = "Unknown";
-
-		private string ControllerHost = string.Empty;
-		private int ControllerPort = 9000;
-
-		private string LastPatternFile = string.Empty;
-		private string[] LastZoneNames = new string[0];
-		private string[] KnownZones = new string[0];
-		private string CachedPatternData = string.Empty;
-
-		public Jellyfish_Lighting_Protocol(Jellyfish_Lighting_Transport transport, byte id) : base(transport, id)
-		{
-			Transport = transport;
-			TransportLayer = transport;
-			Device = transport.Device;
-			TransportLayer.ConnectionLost += HandleTransportConnectionLost;
-			TransportLayer.ConnectionEstablished += HandleTransportConnectionEstablished;
-		}
-
-		public void Start()
-		{
-			UpdatePollingInterval(Device.Settings.PollIntervalSeconds);
-			EnableAutoPolling = true;
-			ApplyTransportConfiguration();
-			TransportLayer.Start();
-
-			if (TransportLayer.IsSocketConnected)
-			{
-				lock (_stateLock)
-				{
-					LastStatus = "Connected (WebSocket scaffold)";
-					LastOnlineState = true;
-				}
-				PollNow();
-			}
-			else
-			{
-				lock (_stateLock)
-				{
-					LastStatus = "Disconnected: " + TransportLayer.LastTransportError;
-					LastOnlineState = false;
-				}
-				UI_Update?.Invoke();
-			}
-		}
-
-		public void Stop()
-		{
-			EnableAutoPolling = false;
-			TransportLayer.Stop();
-			lock (_stateLock)
-			{
-				LastStatus = "Disconnected";
-				LastOnlineState = false;
-			}
-			UI_Update?.Invoke();
-		}
-
-		public void Dispose()
-		{
-			TransportLayer.ConnectionLost -= HandleTransportConnectionLost;
-			TransportLayer.ConnectionEstablished -= HandleTransportConnectionEstablished;
-		}
-
-		public void PollNow()
-		{
-			Poll();
-		}
-
-		public void UpdatePollingInterval(int pollIntervalSeconds)
-		{
-			if (pollIntervalSeconds < 10)
-			{
-				pollIntervalSeconds = 10;
-			}
-			PollingInterval = pollIntervalSeconds * 1000;
-		}
-
-		public void SetPowerState(int state)
-		{
-			if (state != 0 && state != 1)
-			{
-				lock (_stateLock) { LastStatus = "Invalid power state. Use 0 or 1."; }
-				UI_Update?.Invoke();
-				return;
-			}
-
-			string patternFile;
-			string[] zoneNames;
-			lock (_stateLock)
-			{
-				patternFile = LastPatternFile;
-				zoneNames = LastZoneNames;
-			}
-
-			if (string.IsNullOrEmpty(patternFile) || zoneNames == null || zoneNames.Length == 0)
-			{
-				lock (_stateLock) { LastStatus = "Power command requires a previously selected pattern and zones."; }
-				UI_Update?.Invoke();
-				return;
-			}
-
-			TransportLayer.SendJson(BuildRunPatternBasicCommand(patternFile, zoneNames, state));
-			lock (_stateLock)
-			{
-				LastAckStatus = state == 1 ? "Power on command sent" : "Power off command sent";
-				UpdateLastStatus();
-			}
-			UI_Update?.Invoke();
-		}
-
-		protected override void Poll()
-		{
-			if (!TransportLayer.IsSocketConnected)
-			{
-				lock (_stateLock)
-				{
-					LastStatus = "WebSocket not connected";
-					LastOnlineState = false;
-				}
-				UI_Update?.Invoke();
-				return;
-			}
-
-			TransportLayer.SendJson(BuildGetPatternListCommand());
-			TransportLayer.SendJson(BuildGetZoneListCommand());
-			lock (_stateLock)
-			{
-				LastAckStatus = "Polling: requested patternFileList + zones";
-				UpdateLastStatus();
-			}
-			UI_Update?.Invoke();
-		}
-
-		public void RequestPatternFileData(string folder, string patternName)
-		{
-			if (string.IsNullOrEmpty(folder) || string.IsNullOrEmpty(patternName))
-			{
-				lock (_stateLock) { LastStatus = "Pattern file data requires folder and pattern name."; }
-				UI_Update?.Invoke();
-				return;
-			}
-
-			lock (_stateLock) { LastPatternFile = folder + "/" + patternName; }
-			TransportLayer.SendJson(BuildGetPatternFileDataCommand(folder, patternName));
-			lock (_stateLock)
-			{
-				LastAckStatus = "Requested pattern file data.";
-				UpdateLastStatus();
-			}
-			UI_Update?.Invoke();
-		}
-
-		public void RunPattern(string filePath, string[] zoneNames, int state)
-		{
-			string[] knownZones;
-			lock (_stateLock) { knownZones = KnownZones; }
-
-			if (!IsValidBasicRunPatternRequest(filePath, zoneNames, state, knownZones))
-			{
-				lock (_stateLock) { LastStatus = "RunPattern basic requires file, state (0/1), and at least one known zone."; }
-				UI_Update?.Invoke();
-				return;
-			}
-
-			TransportLayer.SendJson(BuildRunPatternBasicCommand(filePath, zoneNames, state));
-			lock (_stateLock)
-			{
-				LastPatternFile = filePath;
-				LastZoneNames = zoneNames;
-				LastAckStatus = "RunPattern basic command sent";
-				UpdateLastStatus();
-			}
-			UI_Update?.Invoke();
-		}
-
-		public void ApplyAdvancedPatternData(string dataJson, string[] zoneNames, int state)
-		{
-			string validationError;
-			if (!ValidateAdvancedPatternData(dataJson, zoneNames, state, out validationError))
-			{
-				lock (_stateLock) { LastStatus = "Advanced pattern validation failed: " + validationError; }
-				UI_Update?.Invoke();
-				return;
-			}
-
-			TransportLayer.SendJson(BuildRunPatternAdvancedCommand(dataJson, zoneNames, state));
-			lock (_stateLock)
-			{
-				CachedPatternData = dataJson;
-				LastZoneNames = zoneNames;
-				LastAckStatus = "RunPattern advanced command sent";
-				UpdateLastStatus();
-			}
-			UI_Update?.Invoke();
-		}
-
-		public void SetBrightness(int brightness, string[] zoneNames)
-		{
-			if (brightness < 0 || brightness > 100)
-			{
-				lock (_stateLock) { LastStatus = "Brightness must be between 0 and 100."; }
-				UI_Update?.Invoke();
-				return;
-			}
-
-			string cached;
-			lock (_stateLock) { cached = CachedPatternData; }
-
-			if (string.IsNullOrEmpty(cached))
-			{
-				lock (_stateLock) { LastStatus = "No cached pattern data. Request patternFileData first."; }
-				UI_Update?.Invoke();
-				return;
-			}
-
-			var updated = ReplaceIntField(cached, "brightness", brightness);
-			ApplyAdvancedPatternData(updated, zoneNames, 1);
-		}
-
-		public void SetSpeed(int speed, string[] zoneNames)
-		{
-			if (speed < 1)
-			{
-				lock (_stateLock) { LastStatus = "Speed must be >= 1."; }
-				UI_Update?.Invoke();
-				return;
-			}
-
-			string cached;
-			lock (_stateLock) { cached = CachedPatternData; }
-
-			if (string.IsNullOrEmpty(cached))
-			{
-				lock (_stateLock) { LastStatus = "No cached pattern data. Request patternFileData first."; }
-				UI_Update?.Invoke();
-				return;
-			}
-
-			var updated = ReplaceIntField(cached, "speed", speed);
-			ApplyAdvancedPatternData(updated, zoneNames, 1);
-		}
-
-		public void HandleInboundWebSocketJson(string json)
-		{
-			if (string.IsNullOrEmpty(json) || json.IndexOf("\"cmd\":\"fromCtlr\"", StringComparison.OrdinalIgnoreCase) < 0)
-			{
-				return;
-			}
-
-			// Parse all values into locals first — no shared state reads needed
-			string newScene = null;
-			string newPatternFile = null;
-			string newCachedPatternData = null;
-			int? newBrightness = null;
-			int? newSpeed = null;
-			string newAckStatus = null;
-			string newPowerStatus = null;
-			string newZoneSummary = null;
-			string[] newKnownZones = null;
-
-			if (json.IndexOf("\"runPattern\"", StringComparison.OrdinalIgnoreCase) >= 0)
-			{
-				var runPatternFile = ExtractString(json, "file");
-				if (!string.IsNullOrEmpty(runPatternFile))
-				{
-					newScene = runPatternFile;
-					newPatternFile = runPatternFile;
-				}
-
-				var runPatternData = ExtractString(json, "data");
-				if (!string.IsNullOrEmpty(runPatternData))
-				{
-					newCachedPatternData = runPatternData;
-					newBrightness = ExtractInt(runPatternData, "brightness");
-					newSpeed = ExtractInt(runPatternData, "speed");
-				}
-
-				var runPatternZoneId = ExtractString(json, "id");
-				var runPatternZoneFromArray = ExtractFirstArrayValue(json, "zoneName");
-				var runPatternZone = !string.IsNullOrEmpty(runPatternZoneId) ? runPatternZoneId : runPatternZoneFromArray;
-				newAckStatus = !string.IsNullOrEmpty(runPatternZone)
-					? "RunPattern ack: " + runPatternZone
-					: "RunPattern update received";
-			}
-
-			// Top-level brightness only applies when not already sourced from runPattern data
-			if (newBrightness == null)
-			{
-				newBrightness = ExtractInt(json, "brightness");
-			}
-
-			var ledPower = ExtractBool(json, "ledPower");
-			if (ledPower != null)
-			{
-				newPowerStatus = (bool)ledPower ? "LED power is ON" : "LED power is OFF";
-			}
-
-			if (json.IndexOf("\"patternFileList\"", StringComparison.OrdinalIgnoreCase) >= 0)
-			{
-				int folderCount;
-				int patternCount;
-				ExtractPatternCounts(json, out folderCount, out patternCount);
-				// Pattern list counts go to ack status; ZoneSummary is reserved for zone names
-				newAckStatus = string.Format("Pattern list: {0} folders, {1} patterns", folderCount, patternCount);
-			}
-
-			if (json.IndexOf("\"zones\"", StringComparison.OrdinalIgnoreCase) >= 0)
-			{
-				newKnownZones = ExtractZoneNames(json);
-				newZoneSummary = string.Format("Zones: {0}", newKnownZones.Length);
-				if (newAckStatus == null)
-				{
-					newAckStatus = "Zone list received";
-				}
-			}
-
-			if (json.IndexOf("\"patternFileData\"", StringComparison.OrdinalIgnoreCase) >= 0)
-			{
-				var patternData = ExtractString(json, "jsonData");
-				if (!string.IsNullOrEmpty(patternData))
-				{
-					newCachedPatternData = patternData;
-					if (newBrightness == null) newBrightness = ExtractInt(patternData, "brightness");
-					if (newSpeed == null) newSpeed = ExtractInt(patternData, "speed");
-				}
-				newAckStatus = "Pattern file data received";
-			}
-
-			// Apply all state updates atomically under the lock
-			bool sceneChanged;
-			lock (_stateLock)
-			{
-				var previousScene = LastScene;
-				if (newScene != null) LastScene = newScene;
-				if (newPatternFile != null) LastPatternFile = newPatternFile;
-				if (newCachedPatternData != null) CachedPatternData = newCachedPatternData;
-				if (newBrightness != null) LastBrightness = (int)newBrightness;
-				if (newSpeed != null) LastSpeed = (int)newSpeed;
-				if (newAckStatus != null) LastAckStatus = newAckStatus;
-				if (newPowerStatus != null) LastPowerStatus = newPowerStatus;
-				if (newKnownZones != null) KnownZones = newKnownZones;
-				if (newZoneSummary != null) LastZoneSummary = newZoneSummary;
-				LastOnlineState = true;
-				UpdateLastStatus();
-				if (string.IsNullOrEmpty(LastStatus) || LastStatus == "Disconnected")
-				{
-					LastStatus = "fromCtlr update received";
-				}
-				sceneChanged = !string.Equals(previousScene, LastScene, StringComparison.OrdinalIgnoreCase);
-			}
-
-			if (sceneChanged)
-			{
-				Device.TriggerSceneUpdatedEvent();
-			}
-
-			UI_Update?.Invoke();
-		}
-
-		private void HandleTransportConnectionLost(string reason)
-		{
-			lock (_stateLock)
-			{
-				LastOnlineState = false;
-				LastStatus = "Disconnected";
-				if (!string.IsNullOrEmpty(reason))
-				{
-					LastStatus += ": " + reason;
-				}
-			}
-			UI_Update?.Invoke();
-		}
-
-		private void HandleTransportConnectionEstablished(bool isReconnect)
-		{
-			lock (_stateLock)
-			{
-				LastOnlineState = true;
-				LastStatus = isReconnect ? "Reconnected" : "Connected (WebSocket scaffold)";
-				if (isReconnect)
-				{
-					LastAckStatus = "Reconnected - resyncing patternFileList + zones";
-				}
-			}
-			PollNow();
-			RestoreCachedStateAfterReconnect();
-			UI_Update?.Invoke();
-		}
-
-		private void RestoreCachedStateAfterReconnect()
-		{
-			if (!TransportLayer.IsSocketConnected)
-			{
-				return;
-			}
-
-			string cachedData;
-			string patternFile;
-			string[] zoneNames;
-			string powerStatus;
-			lock (_stateLock)
-			{
-				cachedData = CachedPatternData;
-				patternFile = LastPatternFile;
-				zoneNames = LastZoneNames;
-				powerStatus = LastPowerStatus;
-			}
-
-			var restoreState = string.Equals(powerStatus, "LED power is OFF", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
-
-			if (!string.IsNullOrEmpty(cachedData) && zoneNames != null && zoneNames.Length > 0)
-			{
-				TransportLayer.SendJson(BuildRunPatternAdvancedCommand(cachedData, zoneNames, restoreState));
-				lock (_stateLock)
-				{
-					LastAckStatus = "Reconnected - restored cached pattern state";
-					UpdateLastStatus();
-				}
-				return;
-			}
-
-			if (!string.IsNullOrEmpty(patternFile) && zoneNames != null && zoneNames.Length > 0)
-			{
-				TransportLayer.SendJson(BuildRunPatternBasicCommand(patternFile, zoneNames, restoreState));
-				lock (_stateLock)
-				{
-					LastAckStatus = "Reconnected - restored last runPattern state";
-					UpdateLastStatus();
-				}
-			}
-		}
-
-		private void UpdateLastStatus()
-		{
-			// Must be called under _stateLock
-			if (!string.IsNullOrEmpty(LastPowerStatus))
-			{
-				LastStatus = LastPowerStatus;
-				if (!string.IsNullOrEmpty(LastAckStatus))
-				{
-					LastStatus += " | " + LastAckStatus;
-				}
-				return;
-			}
-
-			if (!string.IsNullOrEmpty(LastAckStatus))
-			{
-				LastStatus = LastAckStatus;
-			}
-		}
-
-		public static string BuildGetPatternListCommand()
-		{
-			return "{\"cmd\":\"toCtlrGet\",\"get\":[[\"patternFileList\"]]}";
-		}
-
-		public static string BuildGetZoneListCommand()
-		{
-			return "{\"cmd\":\"toCtlrGet\",\"get\":[[\"zones\"]]}";
-		}
-
-		public static string BuildGetPatternFileDataCommand(string folder, string fileName)
-		{
-			return string.Format("{{\"cmd\":\"toCtlrGet\",\"get\":[[\"patternFileData\",\"{0}\",\"{1}\"]]}}", Escape(folder), Escape(fileName));
-		}
-
-		public static string BuildRunPatternBasicCommand(string filePath, string[] zoneNames, int state)
-		{
-			var zones = BuildZoneArray(zoneNames);
-			return string.Format("{{\"cmd\":\"toCtlrSet\",\"runPattern\":{{\"file\":\"{0}\",\"data\":\"\",\"id\":\"\",\"state\":{1},\"zoneName\":[{2}]}}}}", Escape(filePath), state, zones);
-		}
-
-		public static string BuildRunPatternAdvancedCommand(string dataJson, string[] zoneNames, int state)
-		{
-			var zones = BuildZoneArray(zoneNames);
-			var escapedData = Escape(dataJson);
-			return string.Format("{{\"cmd\":\"toCtlrSet\",\"runPattern\":{{\"file\":\"\",\"data\":\"{0}\",\"id\":\"\",\"state\":{1},\"zoneName\":[{2}]}}}}", escapedData, state, zones);
-		}
-
-		private static bool IsValidBasicRunPatternRequest(string filePath, string[] zoneNames, int state, string[] knownZones)
-		{
-			if (string.IsNullOrEmpty(filePath) || zoneNames == null || zoneNames.Length == 0 || (state != 0 && state != 1))
-			{
-				return false;
-			}
-
-			if (knownZones == null || knownZones.Length == 0)
-			{
-				return true;
-			}
-
-			for (var i = 0; i < zoneNames.Length; i++)
-			{
-				var matched = false;
-				for (var j = 0; j < knownZones.Length; j++)
-				{
-					if (string.Equals(zoneNames[i], knownZones[j], StringComparison.OrdinalIgnoreCase))
-					{
-						matched = true;
-						break;
-					}
-				}
-				if (!matched)
-				{
-					return false;
-				}
-			}
-
-			return true;
-		}
-
-		private static bool ValidateAdvancedPatternData(string dataJson, string[] zoneNames, int state, out string error)
-		{
-			error = string.Empty;
-			if (string.IsNullOrEmpty(dataJson))
-			{
-				error = "data JSON is required";
-				return false;
-			}
-
-			if (zoneNames == null || zoneNames.Length == 0)
-			{
-				error = "at least one zone is required";
-				return false;
-			}
-
-			if (state != 0 && state != 1)
-			{
-				error = "state must be 0 or 1";
-				return false;
-			}
-
-			if (!ContainsKey(dataJson, "colors") || !ContainsKey(dataJson, "spaceBetweenPixels") || !ContainsKey(dataJson, "effectBetweenPixels") ||
-				!ContainsKey(dataJson, "type") || !ContainsKey(dataJson, "skip") || !ContainsKey(dataJson, "numOfLeds") ||
-				!ContainsKey(dataJson, "runData") || !ContainsKey(dataJson, "direction"))
-			{
-				error = "one or more required advanced data fields are missing";
-				return false;
-			}
-
-			if (!ContainsKey(dataJson, "speed") || !ContainsKey(dataJson, "brightness") || !ContainsKey(dataJson, "effect") || !ContainsKey(dataJson, "effectValue") || !ContainsKey(dataJson, "rgbAdj"))
-			{
-				error = "runData fields are incomplete";
-				return false;
-			}
-
-			var effectValue = ExtractString(dataJson, "effect");
-			if (!string.Equals(effectValue, "No Effect", StringComparison.OrdinalIgnoreCase))
-			{
-				error = "runData.effect must be 'No Effect'";
-				return false;
-			}
-
-			var effectValueInt = ExtractInt(dataJson, "effectValue");
-			if (effectValueInt == null || effectValueInt != 0)
-			{
-				error = "runData.effectValue must be 0";
-				return false;
-			}
-
-			if (dataJson.IndexOf("\"rgbAdj\":[100,100,100]", StringComparison.OrdinalIgnoreCase) < 0)
-			{
-				error = "runData.rgbAdj must be [100,100,100]";
-				return false;
-			}
-
-			var brightness = ExtractInt(dataJson, "brightness");
-			if (brightness == null || brightness < 0 || brightness > 100)
-			{
-				error = "runData.brightness must be between 0 and 100";
-				return false;
-			}
-
-			var colorsMatch = Regex.Match(dataJson, "\\\"colors\\\"\\s*:\\s*\\[(?<values>[^\\]]*)\\]", RegexOptions.IgnoreCase);
-			if (!colorsMatch.Success)
-			{
-				error = "colors array is missing";
-				return false;
-			}
-
-			var rawColors = colorsMatch.Groups["values"].Value;
-			if (string.IsNullOrEmpty(rawColors))
-			{
-				error = "colors cannot be empty";
-				return false;
-			}
-
-			var values = rawColors.Split(',');
-			if (values.Length % 3 != 0 || values.Length > 90)
-			{
-				error = "colors length must be a multiple of 3 and <= 90";
-				return false;
-			}
-
-			for (var i = 0; i < values.Length; i++)
-			{
-				int colorValue;
-				if (!int.TryParse(values[i].Trim(), out colorValue) || colorValue < 0 || colorValue > 255)
-				{
-					error = "each colors value must be between 0 and 255";
-					return false;
-				}
-			}
-
-			return true;
-		}
-
-		private static string ReplaceIntField(string json, string fieldName, int value)
-		{
-			return Regex.Replace(
-				json,
-				"\\\"" + fieldName + "\\\"\\s*:\\s*-?\\d+",
-				"\"" + fieldName + "\":" + value,
-				RegexOptions.IgnoreCase);
-		}
-
-		private static string[] ExtractZoneNames(string json)
-		{
-			if (string.IsNullOrEmpty(json))
-			{
-				return new string[0];
-			}
-
-			var matches = Regex.Matches(json, "\\\"(?<zone>[^\\\"]+)\\\"\\s*:\\s*\\{\\s*\\\"numPixels\\\"", RegexOptions.IgnoreCase);
-			if (matches.Count == 0)
-			{
-				return new string[0];
-			}
-
-			var zones = new string[matches.Count];
-			for (var i = 0; i < matches.Count; i++)
-			{
-				zones[i] = matches[i].Groups["zone"].Value;
-			}
-			return zones;
-		}
-
-		private static void ExtractPatternCounts(string json, out int folderCount, out int patternCount)
-		{
-			folderCount = 0;
-			patternCount = 0;
-			if (string.IsNullOrEmpty(json))
-			{
-				return;
-			}
-
-			var folderHeaderMatches = Regex.Matches(json, "\\\"folders\\\"\\s*:\\s*\\\"[^\\\"]*\\\"\\s*,\\s*\\\"name\\\"\\s*:\\s*\\\"\\\"", RegexOptions.IgnoreCase);
-			folderCount = folderHeaderMatches.Count;
-
-			var allNameMatches = Regex.Matches(json, "\\\"name\\\"\\s*:\\s*\\\"(?<name>[^\\\"]*)\\\"", RegexOptions.IgnoreCase);
-			for (var i = 0; i < allNameMatches.Count; i++)
-			{
-				if (!string.IsNullOrEmpty(allNameMatches[i].Groups["name"].Value))
-				{
-					patternCount++;
-				}
-			}
-		}
-
-		private static bool ContainsKey(string json, string key)
-		{
-			return json.IndexOf("\"" + key + "\"", StringComparison.OrdinalIgnoreCase) >= 0;
-		}
-
-		private static string BuildZoneArray(string[] zoneNames)
-		{
-			if (zoneNames == null || zoneNames.Length == 0)
-			{
-				return string.Empty;
-			}
-
-			var parts = new string[zoneNames.Length];
-			for (var i = 0; i < zoneNames.Length; i++)
-			{
-				parts[i] = "\"" + Escape(zoneNames[i]) + "\"";
-			}
-
-			return string.Join(",", parts);
-		}
-
-		private static string Escape(string value)
-		{
-			return string.IsNullOrEmpty(value) ? string.Empty : value.Replace("\\", "\\\\").Replace("\"", "\\\"");
-		}
-
-		private static string ExtractString(string json, string key)
-		{
-			var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*\\\"(?<v>(?:[^\\\"\\\\]|\\\\.)*)\\\"", RegexOptions.IgnoreCase);
-			return match.Success ? Unescape(match.Groups["v"].Value) : null;
-		}
-
-		private static string Unescape(string value)
-		{
-			if (string.IsNullOrEmpty(value))
-			{
-				return value;
-			}
-
-			return value.Replace("\\\\", "\\").Replace("\\\"", "\"");
-		}
-
-		private static int? ExtractInt(string json, string key)
-		{
-			var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*(?<v>-?\\d+)", RegexOptions.IgnoreCase);
-			if (!match.Success)
-			{
-				return null;
-			}
-
-			int value;
-			return int.TryParse(match.Groups["v"].Value, out value) ? value : (int?)null;
-		}
-
-		private static bool? ExtractBool(string json, string key)
-		{
-			var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*(?<v>true|false)", RegexOptions.IgnoreCase);
-			if (!match.Success)
-			{
-				return null;
-			}
-
-			return string.Equals(match.Groups["v"].Value, "true", StringComparison.OrdinalIgnoreCase);
-		}
-
-		private static string ExtractFirstArrayValue(string json, string key)
-		{
-			var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*\\[(?<v>[^\\]]*)\\]", RegexOptions.IgnoreCase);
-			if (!match.Success)
-			{
-				return null;
-			}
-
-			var arr = match.Groups["v"].Value;
-			var first = Regex.Match(arr, "\\\"(?<item>[^\\\"]*)\\\"");
-			return first.Success ? first.Groups["item"].Value : null;
-		}
-
-		private static int ToPort(string value)
-		{
-			int parsed;
-			return int.TryParse(value, out parsed) && parsed > 0 ? parsed : 9000;
-		}
-
-		private void ApplyTransportConfiguration()
-		{
-			TransportLayer.Configure(ControllerHost, ControllerPort, Device.Settings.UseSsl);
-		}
-
-		protected override void ConnectionChangedEvent(bool connection)
-		{
-			Log("JellyfishLighting - Connection changed: " + connection);
-		}
-
-		protected override void ChooseDeconstructMethod(ValidatedRxData validatedData)
-		{
-		}
-
-		public override void SetUserAttribute(string attributeId, string attributeValue)
-		{
-			switch (attributeId)
-			{
-				case "ControllerHost":
-					ControllerHost = attributeValue ?? string.Empty;
-					break;
-				case "ControllerPort":
-					ControllerPort = ToPort(attributeValue);
-					break;
-			}
-
-			ApplyTransportConfiguration();
-		}
-	}
+    public class Jellyfish_Lighting_Protocol : ABaseDriverProtocol, IDisposable
+    {
+        private readonly Jellyfish_Lighting Device;
+        private readonly Jellyfish_Lighting_Transport TransportLayer;
+        private readonly object _stateLock = new object();
+        private bool HasStarted;
+
+        public Jellyfish_Lighting.UiUpdateDelegate UI_Update;
+
+        public string LastStatus = "Disconnected";
+        public string LastAckStatus = "";
+        public string LastPowerStatus = "";
+        public bool LastOnlineState;
+        public string LastScene = "Unknown";
+        public int LastBrightness;
+        public int LastSpeed;
+        public string LastZoneSummary = "Unknown";
+
+        private string ControllerHost = string.Empty;
+        private int ControllerPort = 9000;
+
+        private string LastPatternFile = string.Empty;
+        private string[] LastZoneNames = new string[0];
+        private string[] KnownZones = new string[0];
+        private string CachedPatternData = string.Empty;
+
+        public Jellyfish_Lighting_Protocol(Jellyfish_Lighting_Transport transport, byte id) : base(transport, id)
+        {
+            Transport = transport;
+            TransportLayer = transport;
+            Device = transport.Device;
+
+            TransportLayer.ConnectionLost += HandleTransportConnectionLost;
+            TransportLayer.ConnectionEstablished += HandleTransportConnectionEstablished;
+        }
+
+        public void Start()
+        {
+            // CHANGED:
+            // Prevent duplicate start calls from causing repeated stop/start cycles.
+            if (HasStarted && TransportLayer != null && TransportLayer.IsSocketConnected)
+            {
+                Log("JellyfishLighting - Protocol.Start ignored because transport is already connected.");
+                return;
+            }
+
+            UpdatePollingInterval(Device.Settings.PollIntervalSeconds);
+            EnableAutoPolling = true;
+
+            Log("JellyfishLighting - Protocol.Start before ApplyTransportConfiguration: " +
+                "host=" + ControllerHost +
+                " port=" + ControllerPort +
+                " useSsl(settings)=" + Device.Settings.UseSsl);
+
+            if (string.IsNullOrEmpty(ControllerHost))
+            {
+                lock (_stateLock)
+                {
+                    LastStatus = "ControllerHost not set";
+                    LastOnlineState = false;
+                }
+
+                Log("JellyfishLighting - Protocol.Start aborted: ControllerHost is blank.");
+                UI_Update?.Invoke();
+                return;
+            }
+
+            ApplyTransportConfiguration();
+            TransportLayer.Start();
+            HasStarted = true;
+
+            if (TransportLayer.IsSocketConnected)
+            {
+                lock (_stateLock)
+                {
+                    LastStatus = "Connected (WebSocket scaffold)";
+                    LastOnlineState = true;
+                }
+                PollNow();
+            }
+            else
+            {
+                lock (_stateLock)
+                {
+                    LastStatus = "Disconnected: " + TransportLayer.LastTransportError;
+                    LastOnlineState = false;
+                }
+                UI_Update?.Invoke();
+            }
+        }
+
+        public void Stop()
+        {
+            EnableAutoPolling = false;
+            HasStarted = false;
+            TransportLayer.Stop();
+
+            lock (_stateLock)
+            {
+                LastStatus = "Disconnected";
+                LastOnlineState = false;
+            }
+
+            UI_Update?.Invoke();
+        }
+
+        public void Dispose()
+        {
+            TransportLayer.ConnectionLost -= HandleTransportConnectionLost;
+            TransportLayer.ConnectionEstablished -= HandleTransportConnectionEstablished;
+        }
+
+        public void PollNow()
+        {
+            Poll();
+        }
+
+        public void UpdatePollingInterval(int pollIntervalSeconds)
+        {
+            if (pollIntervalSeconds < 10)
+            {
+                pollIntervalSeconds = 10;
+            }
+
+            PollingInterval = pollIntervalSeconds * 1000;
+        }
+
+        public void SetPowerState(int state)
+        {
+            if (state != 0 && state != 1)
+            {
+                lock (_stateLock) { LastStatus = "Invalid power state. Use 0 or 1."; }
+                UI_Update?.Invoke();
+                return;
+            }
+
+            string patternFile;
+            string[] zoneNames;
+            lock (_stateLock)
+            {
+                patternFile = LastPatternFile;
+                zoneNames = LastZoneNames;
+            }
+
+            if (string.IsNullOrEmpty(patternFile) || zoneNames == null || zoneNames.Length == 0)
+            {
+                lock (_stateLock) { LastStatus = "Power command requires a previously selected pattern and zones."; }
+                UI_Update?.Invoke();
+                return;
+            }
+
+            TransportLayer.SendJson(BuildRunPatternBasicCommand(patternFile, zoneNames, state));
+
+            lock (_stateLock)
+            {
+                LastAckStatus = state == 1 ? "Power on command sent" : "Power off command sent";
+                UpdateLastStatus();
+            }
+
+            UI_Update?.Invoke();
+        }
+
+        protected override void Poll()
+        {
+            if (!TransportLayer.IsSocketConnected)
+            {
+                lock (_stateLock)
+                {
+                    LastStatus = "WebSocket not connected";
+                    LastOnlineState = false;
+                }
+                UI_Update?.Invoke();
+                return;
+            }
+
+            TransportLayer.SendJson(BuildGetPatternListCommand());
+            TransportLayer.SendJson(BuildGetZoneListCommand());
+
+            lock (_stateLock)
+            {
+                LastAckStatus = "Polling: requested patternFileList + zones";
+                UpdateLastStatus();
+            }
+
+            UI_Update?.Invoke();
+        }
+
+        public void RequestPatternFileData(string folder, string patternName)
+        {
+            if (string.IsNullOrEmpty(folder) || string.IsNullOrEmpty(patternName))
+            {
+                lock (_stateLock) { LastStatus = "Pattern file data requires folder and pattern name."; }
+                UI_Update?.Invoke();
+                return;
+            }
+
+            lock (_stateLock)
+            {
+                LastPatternFile = folder + "/" + patternName;
+            }
+
+            TransportLayer.SendJson(BuildGetPatternFileDataCommand(folder, patternName));
+
+            lock (_stateLock)
+            {
+                LastAckStatus = "Requested pattern file data.";
+                UpdateLastStatus();
+            }
+
+            UI_Update?.Invoke();
+        }
+
+        public void RunPattern(string filePath, string[] zoneNames, int state)
+        {
+            string[] knownZones;
+            lock (_stateLock)
+            {
+                knownZones = KnownZones;
+            }
+
+            if (!IsValidBasicRunPatternRequest(filePath, zoneNames, state, knownZones))
+            {
+                lock (_stateLock) { LastStatus = "RunPattern basic requires file, state (0/1), and at least one known zone."; }
+                UI_Update?.Invoke();
+                return;
+            }
+
+            TransportLayer.SendJson(BuildRunPatternBasicCommand(filePath, zoneNames, state));
+
+            lock (_stateLock)
+            {
+                LastPatternFile = filePath;
+                LastZoneNames = zoneNames;
+                LastAckStatus = "RunPattern basic command sent";
+                UpdateLastStatus();
+            }
+
+            UI_Update?.Invoke();
+        }
+
+        public void ApplyAdvancedPatternData(string dataJson, string[] zoneNames, int state)
+        {
+            string validationError;
+            if (!ValidateAdvancedPatternData(dataJson, zoneNames, state, out validationError))
+            {
+                lock (_stateLock) { LastStatus = "Advanced pattern validation failed: " + validationError; }
+                UI_Update?.Invoke();
+                return;
+            }
+
+            TransportLayer.SendJson(BuildRunPatternAdvancedCommand(dataJson, zoneNames, state));
+
+            lock (_stateLock)
+            {
+                CachedPatternData = dataJson;
+                LastZoneNames = zoneNames;
+                LastAckStatus = "RunPattern advanced command sent";
+                UpdateLastStatus();
+            }
+
+            UI_Update?.Invoke();
+        }
+
+        public void SetBrightness(int brightness, string[] zoneNames)
+        {
+            if (brightness < 0 || brightness > 100)
+            {
+                lock (_stateLock) { LastStatus = "Brightness must be between 0 and 100."; }
+                UI_Update?.Invoke();
+                return;
+            }
+
+            string cached;
+            lock (_stateLock)
+            {
+                cached = CachedPatternData;
+            }
+
+            if (string.IsNullOrEmpty(cached))
+            {
+                lock (_stateLock) { LastStatus = "No cached pattern data. Request patternFileData first."; }
+                UI_Update?.Invoke();
+                return;
+            }
+
+            var updated = ReplaceIntField(cached, "brightness", brightness);
+            ApplyAdvancedPatternData(updated, zoneNames, 1);
+        }
+
+        public void SetSpeed(int speed, string[] zoneNames)
+        {
+            if (speed < 1)
+            {
+                lock (_stateLock) { LastStatus = "Speed must be >= 1."; }
+                UI_Update?.Invoke();
+                return;
+            }
+
+            string cached;
+            lock (_stateLock)
+            {
+                cached = CachedPatternData;
+            }
+
+            if (string.IsNullOrEmpty(cached))
+            {
+                lock (_stateLock) { LastStatus = "No cached pattern data. Request patternFileData first."; }
+                UI_Update?.Invoke();
+                return;
+            }
+
+            var updated = ReplaceIntField(cached, "speed", speed);
+            ApplyAdvancedPatternData(updated, zoneNames, 1);
+        }
+
+        public void HandleInboundWebSocketJson(string json)
+        {
+            if (string.IsNullOrEmpty(json) ||
+                json.IndexOf("\"cmd\":\"fromCtlr\"", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return;
+            }
+
+            string newScene = null;
+            string newPatternFile = null;
+            string newCachedPatternData = null;
+            int? newBrightness = null;
+            int? newSpeed = null;
+            string newAckStatus = null;
+            string newPowerStatus = null;
+            string newZoneSummary = null;
+            string[] newKnownZones = null;
+
+            if (json.IndexOf("\"runPattern\"", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                var runPatternFile = ExtractString(json, "file");
+                if (!string.IsNullOrEmpty(runPatternFile))
+                {
+                    newScene = runPatternFile;
+                    newPatternFile = runPatternFile;
+                }
+
+                var runPatternData = ExtractString(json, "data");
+                if (!string.IsNullOrEmpty(runPatternData))
+                {
+                    newCachedPatternData = runPatternData;
+                    newBrightness = ExtractInt(runPatternData, "brightness");
+                    newSpeed = ExtractInt(runPatternData, "speed");
+                }
+
+                var runPatternZoneId = ExtractString(json, "id");
+                var runPatternZoneFromArray = ExtractFirstArrayValue(json, "zoneName");
+                var runPatternZone = !string.IsNullOrEmpty(runPatternZoneId) ? runPatternZoneId : runPatternZoneFromArray;
+
+                newAckStatus = !string.IsNullOrEmpty(runPatternZone)
+                    ? "RunPattern ack: " + runPatternZone
+                    : "RunPattern update received";
+            }
+
+            if (newBrightness == null)
+            {
+                newBrightness = ExtractInt(json, "brightness");
+            }
+
+            var ledPower = ExtractBool(json, "ledPower");
+            if (ledPower != null)
+            {
+                newPowerStatus = (bool)ledPower ? "LED power is ON" : "LED power is OFF";
+            }
+
+            if (json.IndexOf("\"patternFileList\"", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                int folderCount;
+                int patternCount;
+                ExtractPatternCounts(json, out folderCount, out patternCount);
+                newAckStatus = string.Format("Pattern list: {0} folders, {1} patterns", folderCount, patternCount);
+            }
+
+            if (json.IndexOf("\"zones\"", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                newKnownZones = ExtractZoneNames(json);
+                newZoneSummary = string.Format("Zones: {0}", newKnownZones.Length);
+
+                if (newAckStatus == null)
+                {
+                    newAckStatus = "Zone list received";
+                }
+            }
+
+            if (json.IndexOf("\"patternFileData\"", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                var patternData = ExtractString(json, "jsonData");
+                if (!string.IsNullOrEmpty(patternData))
+                {
+                    newCachedPatternData = patternData;
+                    if (newBrightness == null) newBrightness = ExtractInt(patternData, "brightness");
+                    if (newSpeed == null) newSpeed = ExtractInt(patternData, "speed");
+                }
+
+                newAckStatus = "Pattern file data received";
+            }
+
+            bool sceneChanged;
+            lock (_stateLock)
+            {
+                var previousScene = LastScene;
+
+                if (newScene != null) LastScene = newScene;
+                if (newPatternFile != null) LastPatternFile = newPatternFile;
+                if (newCachedPatternData != null) CachedPatternData = newCachedPatternData;
+                if (newBrightness != null) LastBrightness = (int)newBrightness;
+                if (newSpeed != null) LastSpeed = (int)newSpeed;
+                if (newAckStatus != null) LastAckStatus = newAckStatus;
+                if (newPowerStatus != null) LastPowerStatus = newPowerStatus;
+                if (newKnownZones != null) KnownZones = newKnownZones;
+                if (newZoneSummary != null) LastZoneSummary = newZoneSummary;
+
+                LastOnlineState = true;
+                UpdateLastStatus();
+
+                if (string.IsNullOrEmpty(LastStatus) || LastStatus == "Disconnected")
+                {
+                    LastStatus = "fromCtlr update received";
+                }
+
+                sceneChanged = !string.Equals(previousScene, LastScene, StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (sceneChanged)
+            {
+                Device.TriggerSceneUpdatedEvent();
+            }
+
+            UI_Update?.Invoke();
+        }
+
+        private void HandleTransportConnectionLost(string reason)
+        {
+            lock (_stateLock)
+            {
+                LastOnlineState = false;
+                LastStatus = "Disconnected";
+
+                if (!string.IsNullOrEmpty(reason))
+                {
+                    LastStatus += ": " + reason;
+                }
+            }
+
+            UI_Update?.Invoke();
+        }
+
+        private void HandleTransportConnectionEstablished(bool isReconnect)
+        {
+            lock (_stateLock)
+            {
+                LastOnlineState = true;
+                LastStatus = isReconnect ? "Reconnected" : "Connected (WebSocket scaffold)";
+
+                if (isReconnect)
+                {
+                    LastAckStatus = "Reconnected - resyncing patternFileList + zones";
+                }
+            }
+
+            PollNow();
+            RestoreCachedStateAfterReconnect();
+            UI_Update?.Invoke();
+        }
+
+        private void RestoreCachedStateAfterReconnect()
+        {
+            if (!TransportLayer.IsSocketConnected)
+            {
+                return;
+            }
+
+            string cachedData;
+            string patternFile;
+            string[] zoneNames;
+            string powerStatus;
+
+            lock (_stateLock)
+            {
+                cachedData = CachedPatternData;
+                patternFile = LastPatternFile;
+                zoneNames = LastZoneNames;
+                powerStatus = LastPowerStatus;
+            }
+
+            var restoreState = string.Equals(powerStatus, "LED power is OFF", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+
+            if (!string.IsNullOrEmpty(cachedData) && zoneNames != null && zoneNames.Length > 0)
+            {
+                TransportLayer.SendJson(BuildRunPatternAdvancedCommand(cachedData, zoneNames, restoreState));
+
+                lock (_stateLock)
+                {
+                    LastAckStatus = "Reconnected - restored cached pattern state";
+                    UpdateLastStatus();
+                }
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(patternFile) && zoneNames != null && zoneNames.Length > 0)
+            {
+                TransportLayer.SendJson(BuildRunPatternBasicCommand(patternFile, zoneNames, restoreState));
+
+                lock (_stateLock)
+                {
+                    LastAckStatus = "Reconnected - restored last runPattern state";
+                    UpdateLastStatus();
+                }
+            }
+        }
+
+        private void UpdateLastStatus()
+        {
+            if (!string.IsNullOrEmpty(LastPowerStatus))
+            {
+                LastStatus = LastPowerStatus;
+
+                if (!string.IsNullOrEmpty(LastAckStatus))
+                {
+                    LastStatus += " | " + LastAckStatus;
+                }
+
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(LastAckStatus))
+            {
+                LastStatus = LastAckStatus;
+            }
+        }
+
+        public static string BuildGetPatternListCommand()
+        {
+            return "{\"cmd\":\"toCtlrGet\",\"get\":[[\"patternFileList\"]]}";
+        }
+
+        public static string BuildGetZoneListCommand()
+        {
+            return "{\"cmd\":\"toCtlrGet\",\"get\":[[\"zones\"]]}";
+        }
+
+        public static string BuildGetPatternFileDataCommand(string folder, string fileName)
+        {
+            return string.Format("{{\"cmd\":\"toCtlrGet\",\"get\":[[\"patternFileData\",\"{0}\",\"{1}\"]]}}", Escape(folder), Escape(fileName));
+        }
+
+        public static string BuildRunPatternBasicCommand(string filePath, string[] zoneNames, int state)
+        {
+            var zones = BuildZoneArray(zoneNames);
+            return string.Format("{{\"cmd\":\"toCtlrSet\",\"runPattern\":{{\"file\":\"{0}\",\"data\":\"\",\"id\":\"\",\"state\":{1},\"zoneName\":[{2}]}}}}", Escape(filePath), state, zones);
+        }
+
+        public static string BuildRunPatternAdvancedCommand(string dataJson, string[] zoneNames, int state)
+        {
+            var zones = BuildZoneArray(zoneNames);
+            var escapedData = Escape(dataJson);
+            return string.Format("{{\"cmd\":\"toCtlrSet\",\"runPattern\":{{\"file\":\"\",\"data\":\"{0}\",\"id\":\"\",\"state\":{1},\"zoneName\":[{2}]}}}}", escapedData, state, zones);
+        }
+
+        private static bool IsValidBasicRunPatternRequest(string filePath, string[] zoneNames, int state, string[] knownZones)
+        {
+            if (string.IsNullOrEmpty(filePath) || zoneNames == null || zoneNames.Length == 0 || (state != 0 && state != 1))
+            {
+                return false;
+            }
+
+            if (knownZones == null || knownZones.Length == 0)
+            {
+                return true;
+            }
+
+            for (var i = 0; i < zoneNames.Length; i++)
+            {
+                var matched = false;
+                for (var j = 0; j < knownZones.Length; j++)
+                {
+                    if (string.Equals(zoneNames[i], knownZones[j], StringComparison.OrdinalIgnoreCase))
+                    {
+                        matched = true;
+                        break;
+                    }
+                }
+
+                if (!matched)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool ValidateAdvancedPatternData(string dataJson, string[] zoneNames, int state, out string error)
+        {
+            error = string.Empty;
+
+            if (string.IsNullOrEmpty(dataJson))
+            {
+                error = "data JSON is required";
+                return false;
+            }
+
+            if (zoneNames == null || zoneNames.Length == 0)
+            {
+                error = "at least one zone is required";
+                return false;
+            }
+
+            if (state != 0 && state != 1)
+            {
+                error = "state must be 0 or 1";
+                return false;
+            }
+
+            if (!ContainsKey(dataJson, "colors") ||
+                !ContainsKey(dataJson, "spaceBetweenPixels") ||
+                !ContainsKey(dataJson, "effectBetweenPixels") ||
+                !ContainsKey(dataJson, "type") ||
+                !ContainsKey(dataJson, "skip") ||
+                !ContainsKey(dataJson, "numOfLeds") ||
+                !ContainsKey(dataJson, "runData") ||
+                !ContainsKey(dataJson, "direction"))
+            {
+                error = "one or more required advanced data fields are missing";
+                return false;
+            }
+
+            if (!ContainsKey(dataJson, "speed") ||
+                !ContainsKey(dataJson, "brightness") ||
+                !ContainsKey(dataJson, "effect") ||
+                !ContainsKey(dataJson, "effectValue") ||
+                !ContainsKey(dataJson, "rgbAdj"))
+            {
+                error = "runData fields are incomplete";
+                return false;
+            }
+
+            var effectValue = ExtractString(dataJson, "effect");
+            if (!string.Equals(effectValue, "No Effect", StringComparison.OrdinalIgnoreCase))
+            {
+                error = "runData.effect must be 'No Effect'";
+                return false;
+            }
+
+            var effectValueInt = ExtractInt(dataJson, "effectValue");
+            if (effectValueInt == null || effectValueInt != 0)
+            {
+                error = "runData.effectValue must be 0";
+                return false;
+            }
+
+            if (dataJson.IndexOf("\"rgbAdj\":[100,100,100]", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                error = "runData.rgbAdj must be [100,100,100]";
+                return false;
+            }
+
+            var brightness = ExtractInt(dataJson, "brightness");
+            if (brightness == null || brightness < 0 || brightness > 100)
+            {
+                error = "runData.brightness must be between 0 and 100";
+                return false;
+            }
+
+            var colorsMatch = Regex.Match(dataJson, "\\\"colors\\\"\\s*:\\s*\\[(?<values>[^\\]]*)\\]", RegexOptions.IgnoreCase);
+            if (!colorsMatch.Success)
+            {
+                error = "colors array is missing";
+                return false;
+            }
+
+            var rawColors = colorsMatch.Groups["values"].Value;
+            if (string.IsNullOrEmpty(rawColors))
+            {
+                error = "colors cannot be empty";
+                return false;
+            }
+
+            var values = rawColors.Split(',');
+            if (values.Length % 3 != 0 || values.Length > 90)
+            {
+                error = "colors length must be a multiple of 3 and <= 90";
+                return false;
+            }
+
+            for (var i = 0; i < values.Length; i++)
+            {
+                int colorValue;
+                if (!int.TryParse(values[i].Trim(), out colorValue) || colorValue < 0 || colorValue > 255)
+                {
+                    error = "each colors value must be between 0 and 255";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static string ReplaceIntField(string json, string fieldName, int value)
+        {
+            return Regex.Replace(
+                json,
+                "\\\"" + fieldName + "\\\"\\s*:\\s*-?\\d+",
+                "\"" + fieldName + "\":" + value,
+                RegexOptions.IgnoreCase);
+        }
+
+        private static string[] ExtractZoneNames(string json)
+        {
+            if (string.IsNullOrEmpty(json))
+            {
+                return new string[0];
+            }
+
+            var matches = Regex.Matches(json, "\\\"(?<zone>[^\\\"]+)\\\"\\s*:\\s*\\{\\s*\\\"numPixels\\\"", RegexOptions.IgnoreCase);
+            if (matches.Count == 0)
+            {
+                return new string[0];
+            }
+
+            var zones = new string[matches.Count];
+            for (var i = 0; i < matches.Count; i++)
+            {
+                zones[i] = matches[i].Groups["zone"].Value;
+            }
+
+            return zones;
+        }
+
+        private static void ExtractPatternCounts(string json, out int folderCount, out int patternCount)
+        {
+            folderCount = 0;
+            patternCount = 0;
+
+            if (string.IsNullOrEmpty(json))
+            {
+                return;
+            }
+
+            var folderHeaderMatches = Regex.Matches(
+                json,
+                "\\\"folders\\\"\\s*:\\s*\\\"[^\\\"]*\\\"\\s*,\\s*\\\"name\\\"\\s*:\\s*\\\"\\\"",
+                RegexOptions.IgnoreCase);
+
+            folderCount = folderHeaderMatches.Count;
+
+            var allNameMatches = Regex.Matches(json, "\\\"name\\\"\\s*:\\s*\\\"(?<name>[^\\\"]*)\\\"", RegexOptions.IgnoreCase);
+            for (var i = 0; i < allNameMatches.Count; i++)
+            {
+                if (!string.IsNullOrEmpty(allNameMatches[i].Groups["name"].Value))
+                {
+                    patternCount++;
+                }
+            }
+        }
+
+        private static bool ContainsKey(string json, string key)
+        {
+            return json.IndexOf("\"" + key + "\"", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static string BuildZoneArray(string[] zoneNames)
+        {
+            if (zoneNames == null || zoneNames.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            var parts = new string[zoneNames.Length];
+            for (var i = 0; i < zoneNames.Length; i++)
+            {
+                parts[i] = "\"" + Escape(zoneNames[i]) + "\"";
+            }
+
+            return string.Join(",", parts);
+        }
+
+        private static string Escape(string value)
+        {
+            return string.IsNullOrEmpty(value)
+                ? string.Empty
+                : value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+
+        private static string ExtractString(string json, string key)
+        {
+            var match = Regex.Match(
+                json,
+                "\\\"" + key + "\\\"\\s*:\\s*\\\"(?<v>(?:[^\\\"\\\\]|\\\\.)*)\\\"",
+                RegexOptions.IgnoreCase);
+
+            return match.Success ? Unescape(match.Groups["v"].Value) : null;
+        }
+
+        private static string Unescape(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return value;
+            }
+
+            return value.Replace("\\\\", "\\").Replace("\\\"", "\"");
+        }
+
+        private static int? ExtractInt(string json, string key)
+        {
+            var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*(?<v>-?\\d+)", RegexOptions.IgnoreCase);
+            if (!match.Success)
+            {
+                return null;
+            }
+
+            int value;
+            return int.TryParse(match.Groups["v"].Value, out value) ? value : (int?)null;
+        }
+
+        private static bool? ExtractBool(string json, string key)
+        {
+            var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*(?<v>true|false)", RegexOptions.IgnoreCase);
+            if (!match.Success)
+            {
+                return null;
+            }
+
+            return string.Equals(match.Groups["v"].Value, "true", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string ExtractFirstArrayValue(string json, string key)
+        {
+            var match = Regex.Match(json, "\\\"" + key + "\\\"\\s*:\\s*\\[(?<v>[^\\]]*)\\]", RegexOptions.IgnoreCase);
+            if (!match.Success)
+            {
+                return null;
+            }
+
+            var arr = match.Groups["v"].Value;
+            var first = Regex.Match(arr, "\\\"(?<item>[^\\\"]*)\\\"");
+            return first.Success ? first.Groups["item"].Value : null;
+        }
+
+        private static int ToPort(string value)
+        {
+            int parsed;
+            return int.TryParse(value, out parsed) && parsed > 0 ? parsed : 9000;
+        }
+
+        private void ApplyTransportConfiguration()
+        {
+            // CHANGED:
+            // Transport is forced to ws:// only, but we still pass Settings.UseSsl
+            // for compatibility. Transport ignores it.
+            TransportLayer.Configure(ControllerHost, ControllerPort, Device.Settings.UseSsl);
+        }
+
+        protected override void ConnectionChangedEvent(bool connection)
+        {
+            Log("JellyfishLighting - Connection changed: " + connection);
+        }
+
+        protected override void ChooseDeconstructMethod(ValidatedRxData validatedData)
+        {
+        }
+
+        public override void SetUserAttribute(string attributeId, string attributeValue)
+        {
+            // TEST LOG:
+            // This is the most important startup-order debug point.
+            Log("JellyfishLighting - SetUserAttribute: " + attributeId + " = " + attributeValue);
+
+            switch (attributeId)
+            {
+                case "ControllerHost":
+                    ControllerHost = attributeValue ?? string.Empty;
+                    break;
+
+                case "ControllerPort":
+                    ControllerPort = ToPort(attributeValue);
+                    break;
+            }
+
+            // TEST LOG:
+            // Confirms the values after applying the attribute.
+            Log("JellyfishLighting - ApplyTransportConfiguration from SetUserAttribute: " +
+                "host=" + ControllerHost +
+                " port=" + ControllerPort);
+
+            ApplyTransportConfiguration();
+        }
+    }
 }

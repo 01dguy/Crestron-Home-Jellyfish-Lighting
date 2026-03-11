@@ -9,11 +9,11 @@
       "VersionDate": "2026-03-06 00:00:00",
       "DriverVersion": "1.0.0",
       "SdkVersion": "16.00.000",
-      "Description": "Crestron Home extension driver scaffold for JellyFish LAN WebSocket API",
+      "Description": "Crestron Home extension driver Jellyfish Lighting",
       "Guid": "5fd36a76-9cc8-4d66-bfdb-421585fd4372",
       "DependencyGroup": "",
       "Developer": {
-        "Company": "RoomTec",
+        "Company": "SCS",
         "Contact": "Trey Nichols",
         "Email": "",
         "Website": "",
@@ -68,7 +68,7 @@
         "Data": {
           "DataType": "String",
           "Mask": "",
-          "DefaultValue": ""
+          "DefaultValue": "192.168.4.15"
         }
       },
       {
