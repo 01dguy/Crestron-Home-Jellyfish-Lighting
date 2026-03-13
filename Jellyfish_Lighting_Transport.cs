@@ -70,14 +70,18 @@ namespace JellyfishLighting.ExtensionDriver
 
         public override void Start()
         {
-            // CHANGED:
-            // Old version toggled IsStopping before/after Stop() in a messy way.
-            // This is cleaner and makes startup state easier to reason about.
+            lock (SocketSyncRoot)
+            {
+                if (IsSocketConnected && Socket != null && Socket.State == WebSocketState.Open)
+                {
+                    Log("JellyfishLighting - Transport.Start ignored because socket is already open.");
+                    return;
+                }
+            }
+
             Stop();
             IsStopping = false;
 
-            // TEST LOG:
-            // Confirms the final URI input before connection begins.
             Log("JellyfishLighting - Transport.Start host=" + ControllerHost +
                 " port=" + ControllerPort +
                 " uri=" + GetSocketUri());

@@ -40,23 +40,19 @@ namespace JellyfishLighting.ExtensionDriver
             TransportLayer.ConnectionEstablished += HandleTransportConnectionEstablished;
         }
 
+ 
         public void Start()
         {
-            // CHANGED:
-            // Prevent duplicate start calls from causing repeated stop/start cycles.
-            if (HasStarted && TransportLayer != null && TransportLayer.IsSocketConnected)
-            {
-                Log("JellyfishLighting - Protocol.Start ignored because transport is already connected.");
-                return;
-            }
+            Log("JellyfishLighting - Protocol.Start called");
 
             UpdatePollingInterval(Device.Settings.PollIntervalSeconds);
             EnableAutoPolling = true;
 
-            Log("JellyfishLighting - Protocol.Start before ApplyTransportConfiguration: " +
+            Log("JellyfishLighting - Protocol.Start state: " +
                 "host=" + ControllerHost +
                 " port=" + ControllerPort +
-                " useSsl(settings)=" + Device.Settings.UseSsl);
+                " useSsl(settings)=" + Device.Settings.UseSsl +
+                " socketConnected=" + TransportLayer.IsSocketConnected);
 
             if (string.IsNullOrEmpty(ControllerHost))
             {
@@ -71,9 +67,10 @@ namespace JellyfishLighting.ExtensionDriver
                 return;
             }
 
+            // CHANGED:
+            // Only configure transport here. Do NOT start it here.
+            // Crestron/Home appears to already start ConnectionTransport automatically.
             ApplyTransportConfiguration();
-            TransportLayer.Start();
-            HasStarted = true;
 
             if (TransportLayer.IsSocketConnected)
             {
@@ -82,15 +79,17 @@ namespace JellyfishLighting.ExtensionDriver
                     LastStatus = "Connected (WebSocket scaffold)";
                     LastOnlineState = true;
                 }
+
                 PollNow();
             }
             else
             {
                 lock (_stateLock)
                 {
-                    LastStatus = "Disconnected: " + TransportLayer.LastTransportError;
+                    LastStatus = "Waiting for transport connection";
                     LastOnlineState = false;
                 }
+
                 UI_Update?.Invoke();
             }
         }
@@ -327,6 +326,10 @@ namespace JellyfishLighting.ExtensionDriver
                 return;
             }
 
+            // TEST LOG:
+            // Shows the raw controller JSON so we can see where brightness/speed live.
+            Log("JellyfishLighting - inbound controller JSON: " + json);
+
             string newScene = null;
             string newPatternFile = null;
             string newCachedPatternData = null;
@@ -381,11 +384,25 @@ namespace JellyfishLighting.ExtensionDriver
                 ExtractPatternCounts(json, out folderCount, out patternCount);
                 newAckStatus = string.Format("Pattern list: {0} folders, {1} patterns", folderCount, patternCount);
             }
-
+            
+            //UI Update
             if (json.IndexOf("\"zones\"", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 newKnownZones = ExtractZoneNames(json);
-                newZoneSummary = string.Format("Zones: {0}", newKnownZones.Length);
+
+                Log("JellyfishLighting - parsed zones: " +
+                    (newKnownZones == null || newKnownZones.Length == 0
+                        ? "none"
+                        : string.Join(", ", newKnownZones)));
+
+                if (newKnownZones == null || newKnownZones.Length == 0)
+                {
+                    newZoneSummary = "Zones: none";
+                }
+                else
+                {
+                    newZoneSummary = "Zones: " + string.Join(", ", newKnownZones);
+                }
 
                 if (newAckStatus == null)
                 {
@@ -405,6 +422,17 @@ namespace JellyfishLighting.ExtensionDriver
 
                 newAckStatus = "Pattern file data received";
             }
+
+            // TEST LOG:
+            // Shows what the parser extracted from the inbound message before applying state.
+            Log("JellyfishLighting - parsed inbound values: " +
+                "scene=" + (newScene ?? "null") +
+                ", brightness=" + (newBrightness != null ? newBrightness.Value.ToString() : "null") +
+                ", speed=" + (newSpeed != null ? newSpeed.Value.ToString() : "null") +
+                ", ack=" + (newAckStatus ?? "null"));
+
+            // DEBUG: show what ZoneSummary we are about to apply
+            Log("JellyfishLighting - applying zone summary: " + (newZoneSummary ?? "null"));
 
             bool sceneChanged;
             lock (_stateLock)

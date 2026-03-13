@@ -434,7 +434,7 @@ namespace JellyfishLighting.ExtensionDriver
             // CHANGED:
             // Removed Connected = true here.
             // Actual connection state is now updated in Update_UI() from Protocol.LastOnlineState.
-            Protocol.Start();
+            //Protocol.Start();
         }
 
         public override void Disconnect()
