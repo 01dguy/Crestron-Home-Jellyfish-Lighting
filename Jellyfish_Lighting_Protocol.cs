@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 using System.Text.RegularExpressions;
 using Crestron.RAD.Common.BasicDriver;
 
@@ -10,6 +11,11 @@ namespace JellyfishLighting.ExtensionDriver
         private readonly Jellyfish_Lighting_Transport TransportLayer;
         private readonly object _stateLock = new object();
         private bool HasStarted;
+
+        // Used to avoid replaying stale cached state immediately after reconnect
+        // if a user command was just sent.
+        private long LastOutboundCommandTicks;
+        private long ReconnectStartedTicks;
 
         public Jellyfish_Lighting.UiUpdateDelegate UI_Update;
 
@@ -40,10 +46,20 @@ namespace JellyfishLighting.ExtensionDriver
             TransportLayer.ConnectionEstablished += HandleTransportConnectionEstablished;
         }
 
-        // Test Edit:
         public void Start()
         {
             Log("JellyfishLighting - Protocol.Start called");
+
+            lock (_stateLock)
+            {
+                if (HasStarted)
+                {
+                    Log("JellyfishLighting - Protocol.Start ignored (already started).");
+                    return;
+                }
+
+                HasStarted = true;
+            }
 
             UpdatePollingInterval(Device.Settings.PollIntervalSeconds);
             EnableAutoPolling = true;
@@ -67,9 +83,7 @@ namespace JellyfishLighting.ExtensionDriver
                 return;
             }
 
-            // CHANGED:
-            // Only configure transport here. Do NOT start it here.
-            // Crestron/Home appears to already start ConnectionTransport automatically.
+            // Configure only. Transport lifecycle is handled elsewhere.
             ApplyTransportConfiguration();
 
             if (TransportLayer.IsSocketConnected)
@@ -80,6 +94,7 @@ namespace JellyfishLighting.ExtensionDriver
                     LastOnlineState = true;
                 }
 
+                UI_Update?.Invoke(); // immediate UI reflection
                 PollNow();
             }
             else
@@ -97,7 +112,12 @@ namespace JellyfishLighting.ExtensionDriver
         public void Stop()
         {
             EnableAutoPolling = false;
-            HasStarted = false;
+
+            lock (_stateLock)
+            {
+                HasStarted = false;
+            }
+
             TransportLayer.Stop();
 
             lock (_stateLock)
@@ -155,6 +175,7 @@ namespace JellyfishLighting.ExtensionDriver
             }
 
             TransportLayer.SendJson(BuildRunPatternBasicCommand(patternFile, zoneNames, state));
+            MarkOutboundCommandSent();
 
             lock (_stateLock)
             {
@@ -180,6 +201,7 @@ namespace JellyfishLighting.ExtensionDriver
 
             TransportLayer.SendJson(BuildGetPatternListCommand());
             TransportLayer.SendJson(BuildGetZoneListCommand());
+            MarkOutboundCommandSent();
 
             lock (_stateLock)
             {
@@ -205,6 +227,7 @@ namespace JellyfishLighting.ExtensionDriver
             }
 
             TransportLayer.SendJson(BuildGetPatternFileDataCommand(folder, patternName));
+            MarkOutboundCommandSent();
 
             lock (_stateLock)
             {
@@ -231,6 +254,7 @@ namespace JellyfishLighting.ExtensionDriver
             }
 
             TransportLayer.SendJson(BuildRunPatternBasicCommand(filePath, zoneNames, state));
+            MarkOutboundCommandSent();
 
             lock (_stateLock)
             {
@@ -254,6 +278,7 @@ namespace JellyfishLighting.ExtensionDriver
             }
 
             TransportLayer.SendJson(BuildRunPatternAdvancedCommand(dataJson, zoneNames, state));
+            MarkOutboundCommandSent();
 
             lock (_stateLock)
             {
@@ -326,8 +351,6 @@ namespace JellyfishLighting.ExtensionDriver
                 return;
             }
 
-            // TEST LOG:
-            // Shows the raw controller JSON so we can see where brightness/speed live.
             Log("JellyfishLighting - inbound controller JSON: " + json);
 
             string newScene = null;
@@ -355,6 +378,11 @@ namespace JellyfishLighting.ExtensionDriver
                     newCachedPatternData = runPatternData;
                     newBrightness = ExtractInt(runPatternData, "brightness");
                     newSpeed = ExtractInt(runPatternData, "speed");
+
+                    if (newBrightness == null || newSpeed == null)
+                    {
+                        Log("JellyfishLighting - runPattern.data present but brightness/speed parse incomplete.");
+                    }
                 }
 
                 var runPatternZoneId = ExtractString(json, "id");
@@ -384,8 +412,7 @@ namespace JellyfishLighting.ExtensionDriver
                 ExtractPatternCounts(json, out folderCount, out patternCount);
                 newAckStatus = string.Format("Pattern list: {0} folders, {1} patterns", folderCount, patternCount);
             }
-            
-            //UI Update
+
             if (json.IndexOf("\"zones\"", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 newKnownZones = ExtractZoneNames(json);
@@ -395,14 +422,9 @@ namespace JellyfishLighting.ExtensionDriver
                         ? "none"
                         : string.Join(", ", newKnownZones)));
 
-                if (newKnownZones == null || newKnownZones.Length == 0)
-                {
-                    newZoneSummary = "Zones: none";
-                }
-                else
-                {
-                    newZoneSummary = "Zones: " + string.Join(", ", newKnownZones);
-                }
+                newZoneSummary = (newKnownZones == null || newKnownZones.Length == 0)
+                    ? "Zones: none"
+                    : "Zones: " + string.Join(", ", newKnownZones);
 
                 if (newAckStatus == null)
                 {
@@ -423,15 +445,12 @@ namespace JellyfishLighting.ExtensionDriver
                 newAckStatus = "Pattern file data received";
             }
 
-            // TEST LOG:
-            // Shows what the parser extracted from the inbound message before applying state.
             Log("JellyfishLighting - parsed inbound values: " +
                 "scene=" + (newScene ?? "null") +
                 ", brightness=" + (newBrightness != null ? newBrightness.Value.ToString() : "null") +
                 ", speed=" + (newSpeed != null ? newSpeed.Value.ToString() : "null") +
                 ", ack=" + (newAckStatus ?? "null"));
 
-            // DEBUG: show what ZoneSummary we are about to apply
             Log("JellyfishLighting - applying zone summary: " + (newZoneSummary ?? "null"));
 
             bool sceneChanged;
@@ -486,6 +505,8 @@ namespace JellyfishLighting.ExtensionDriver
 
         private void HandleTransportConnectionEstablished(bool isReconnect)
         {
+            var nowTicks = DateTime.UtcNow.Ticks;
+
             lock (_stateLock)
             {
                 LastOnlineState = true;
@@ -494,7 +515,14 @@ namespace JellyfishLighting.ExtensionDriver
                 if (isReconnect)
                 {
                     LastAckStatus = "Reconnected - resyncing patternFileList + zones";
+                    ReconnectStartedTicks = nowTicks;
                 }
+                else
+                {
+                    ReconnectStartedTicks = 0;
+                }
+
+                UpdateLastStatus();
             }
 
             PollNow();
@@ -513,6 +541,8 @@ namespace JellyfishLighting.ExtensionDriver
             string patternFile;
             string[] zoneNames;
             string powerStatus;
+            long reconnectTicks;
+            long lastOutboundTicks;
 
             lock (_stateLock)
             {
@@ -520,6 +550,20 @@ namespace JellyfishLighting.ExtensionDriver
                 patternFile = LastPatternFile;
                 zoneNames = LastZoneNames;
                 powerStatus = LastPowerStatus;
+                reconnectTicks = ReconnectStartedTicks;
+                lastOutboundTicks = LastOutboundCommandTicks;
+            }
+
+            // If a newer outbound command has already been sent after reconnect began,
+            // don't replay stale cached state.
+            if (reconnectTicks > 0 && lastOutboundTicks > reconnectTicks)
+            {
+                lock (_stateLock)
+                {
+                    LastAckStatus = "Reconnected - skipped cached restore (new command already sent)";
+                    UpdateLastStatus();
+                }
+                return;
             }
 
             var restoreState = string.Equals(powerStatus, "LED power is OFF", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
@@ -527,6 +571,7 @@ namespace JellyfishLighting.ExtensionDriver
             if (!string.IsNullOrEmpty(cachedData) && zoneNames != null && zoneNames.Length > 0)
             {
                 TransportLayer.SendJson(BuildRunPatternAdvancedCommand(cachedData, zoneNames, restoreState));
+                MarkOutboundCommandSent();
 
                 lock (_stateLock)
                 {
@@ -539,12 +584,21 @@ namespace JellyfishLighting.ExtensionDriver
             if (!string.IsNullOrEmpty(patternFile) && zoneNames != null && zoneNames.Length > 0)
             {
                 TransportLayer.SendJson(BuildRunPatternBasicCommand(patternFile, zoneNames, restoreState));
+                MarkOutboundCommandSent();
 
                 lock (_stateLock)
                 {
                     LastAckStatus = "Reconnected - restored last runPattern state";
                     UpdateLastStatus();
                 }
+            }
+        }
+
+        private void MarkOutboundCommandSent()
+        {
+            lock (_stateLock)
+            {
+                LastOutboundCommandTicks = DateTime.UtcNow.Ticks;
             }
         }
 
@@ -744,6 +798,9 @@ namespace JellyfishLighting.ExtensionDriver
                 RegexOptions.IgnoreCase);
         }
 
+        // More robust extraction:
+        // 1) isolate zones object body
+        // 2) parse first-level quoted keys
         private static string[] ExtractZoneNames(string json)
         {
             if (string.IsNullOrEmpty(json))
@@ -751,16 +808,23 @@ namespace JellyfishLighting.ExtensionDriver
                 return new string[0];
             }
 
-            var matches = Regex.Matches(json, "\\\"(?<zone>[^\\\"]+)\\\"\\s*:\\s*\\{\\s*\\\"numPixels\\\"", RegexOptions.IgnoreCase);
-            if (matches.Count == 0)
+            var zonesMatch = Regex.Match(json, "\\\"zones\\\"\\s*:\\s*\\{(?<body>.*)\\}\\s*\\}?", RegexOptions.IgnoreCase);
+            if (!zonesMatch.Success)
             {
                 return new string[0];
             }
 
-            var zones = new string[matches.Count];
-            for (var i = 0; i < matches.Count; i++)
+            var body = zonesMatch.Groups["body"].Value;
+            var keyMatches = Regex.Matches(body, "\\\"(?<zone>[^\\\"]+)\\\"\\s*:\\s*\\{", RegexOptions.IgnoreCase);
+            if (keyMatches.Count == 0)
             {
-                zones[i] = matches[i].Groups["zone"].Value;
+                return new string[0];
+            }
+
+            var zones = new string[keyMatches.Count];
+            for (var i = 0; i < keyMatches.Count; i++)
+            {
+                zones[i] = keyMatches[i].Groups["zone"].Value;
             }
 
             return zones;
@@ -838,7 +902,32 @@ namespace JellyfishLighting.ExtensionDriver
                 return value;
             }
 
-            return value.Replace("\\\\", "\\").Replace("\\\"", "\"");
+            // Safer explicit unescape ordering
+            var sb = new StringBuilder(value.Length);
+            for (var i = 0; i < value.Length; i++)
+            {
+                var c = value[i];
+                if (c == '\\' && i + 1 < value.Length)
+                {
+                    var n = value[i + 1];
+                    switch (n)
+                    {
+                        case '\\': sb.Append('\\'); i++; continue;
+                        case '"': sb.Append('\"'); i++; continue;
+                        case 'n': sb.Append('\n'); i++; continue;
+                        case 'r': sb.Append('\r'); i++; continue;
+                        case 't': sb.Append('\t'); i++; continue;
+                        default:
+                            sb.Append(n);
+                            i++;
+                            continue;
+                    }
+                }
+
+                sb.Append(c);
+            }
+
+            return sb.ToString();
         }
 
         private static int? ExtractInt(string json, string key)
@@ -885,9 +974,7 @@ namespace JellyfishLighting.ExtensionDriver
 
         private void ApplyTransportConfiguration()
         {
-            // CHANGED:
-            // Transport is forced to ws:// only, but we still pass Settings.UseSsl
-            // for compatibility. Transport ignores it.
+            // Transport currently forces ws:// only.
             TransportLayer.Configure(ControllerHost, ControllerPort, Device.Settings.UseSsl);
         }
 
@@ -902,8 +989,6 @@ namespace JellyfishLighting.ExtensionDriver
 
         public override void SetUserAttribute(string attributeId, string attributeValue)
         {
-            // TEST LOG:
-            // This is the most important startup-order debug point.
             Log("JellyfishLighting - SetUserAttribute: " + attributeId + " = " + attributeValue);
 
             switch (attributeId)
@@ -917,8 +1002,6 @@ namespace JellyfishLighting.ExtensionDriver
                     break;
             }
 
-            // TEST LOG:
-            // Confirms the values after applying the attribute.
             Log("JellyfishLighting - ApplyTransportConfiguration from SetUserAttribute: " +
                 "host=" + ControllerHost +
                 " port=" + ControllerPort);

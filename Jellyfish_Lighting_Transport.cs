@@ -18,8 +18,7 @@ namespace JellyfishLighting.ExtensionDriver
         public string ControllerHost = string.Empty;
         public int ControllerPort = 9000;
 
-        // CHANGED:
-        // Kept field for compatibility, but transport now forces ws:// only.
+        // Kept for compatibility, but transport currently forces ws:// only.
         public bool UseSsl;
 
         public string LastTransportError = string.Empty;
@@ -27,14 +26,15 @@ namespace JellyfishLighting.ExtensionDriver
         private readonly object SocketSyncRoot = new object();
         private ClientWebSocket Socket;
         private CancellationTokenSource ReceiveLoopCancellation;
+        private CancellationTokenSource ReconnectLoopCancellation;
         private Task ReceiveLoopTask;
         private int ConnectionGeneration;
         private int ReconnectInProgress;
         private bool IsStopping;
+        private int OfflineNotifiedGeneration = -1;
 
-        // CHANGED:
-        // Endless reconnect with capped backoff.
-        // Sequence: 1s, 2s, 5s, 10s, 30s, 60s, then 60s forever.
+        // Endless reconnect with capped backoff:
+        // 1s, 2s, 5s, 10s, 30s, 60s, then 60s forever.
         private static readonly int[] ReconnectBackoffSeconds = { 1, 2, 5, 10, 30, 60 };
 
         public Jellyfish_Lighting_Transport(Jellyfish_Lighting device)
@@ -49,12 +49,9 @@ namespace JellyfishLighting.ExtensionDriver
             ControllerHost = host ?? string.Empty;
             ControllerPort = port <= 0 ? 9000 : port;
 
-            // CHANGED:
-            // Force ws:// only. Ignore any upstream SSL input.
+            // Force ws:// only for current environment.
             UseSsl = false;
 
-            // TEST LOG:
-            // Shows what runtime configuration actually reached transport.
             Log("JellyfishLighting - Transport.Configure host=" + ControllerHost +
                 " port=" + ControllerPort +
                 " useSsl(requested)=" + useSsl +
@@ -63,7 +60,6 @@ namespace JellyfishLighting.ExtensionDriver
 
         public string GetSocketUri()
         {
-            // CHANGED:
             // Always use ws://. Never attempt wss://.
             return string.Format("ws://{0}:{1}", ControllerHost, ControllerPort);
         }
@@ -81,6 +77,11 @@ namespace JellyfishLighting.ExtensionDriver
 
             Stop();
             IsStopping = false;
+
+            lock (SocketSyncRoot)
+            {
+                ReconnectLoopCancellation = new CancellationTokenSource();
+            }
 
             Log("JellyfishLighting - Transport.Start host=" + ControllerHost +
                 " port=" + ControllerPort +
@@ -104,17 +105,12 @@ namespace JellyfishLighting.ExtensionDriver
             }
 
             var socketUriText = GetSocketUri();
-
-            // TEST LOG:
-            // Verifies the exact URI being attempted.
             Log("JellyfishLighting - final socket uri: " + socketUriText);
 
             Uri socketUri;
             if (!Uri.TryCreate(socketUriText, UriKind.Absolute, out socketUri) ||
                 socketUri.Scheme != "ws")
             {
-                // CHANGED:
-                // Since ws:// is now forced, only ws is valid.
                 LastTransportError = "Invalid websocket uri: " + socketUriText;
                 SetOfflineState(LastTransportError, generation);
                 Log("JellyfishLighting - transport " +
@@ -143,11 +139,28 @@ namespace JellyfishLighting.ExtensionDriver
 
                 lock (SocketSyncRoot)
                 {
+                    var oldSocket = Socket;
+                    var oldReceiveCancellation = ReceiveLoopCancellation;
+
                     Socket = socket;
                     ReceiveLoopCancellation = cancellation;
                     IsSocketConnected = true;
                     IsConnected = true;
+
+                    if (oldReceiveCancellation != null)
+                    {
+                        try { oldReceiveCancellation.Cancel(); } catch { }
+                        oldReceiveCancellation.Dispose();
+                    }
+
+                    if (oldSocket != null && !ReferenceEquals(oldSocket, socket))
+                    {
+                        try { oldSocket.Dispose(); } catch { }
+                    }
                 }
+
+                // Allow one ConnectionLost event again for this new connection generation.
+                Interlocked.Exchange(ref OfflineNotifiedGeneration, -1);
 
                 Log("JellyfishLighting - websocket connected successfully.");
 
@@ -162,15 +175,9 @@ namespace JellyfishLighting.ExtensionDriver
                     (isReconnectAttempt ? "reconnect" : "start") +
                     " failed: " + LastTransportError);
 
-                try
-                {
-                    socket.Dispose();
-                }
-                catch
-                {
-                }
-
+                try { socket.Dispose(); } catch { }
                 cancellation.Dispose();
+
                 SetOfflineState(LastTransportError, generation);
                 return false;
             }
@@ -183,6 +190,7 @@ namespace JellyfishLighting.ExtensionDriver
 
             ClientWebSocket socketToClose;
             CancellationTokenSource cancellationToDispose;
+            CancellationTokenSource reconnectCancellationToDispose;
             Task receiveLoopToWait;
 
             lock (SocketSyncRoot)
@@ -191,24 +199,25 @@ namespace JellyfishLighting.ExtensionDriver
 
                 socketToClose = Socket;
                 cancellationToDispose = ReceiveLoopCancellation;
+                reconnectCancellationToDispose = ReconnectLoopCancellation;
                 receiveLoopToWait = ReceiveLoopTask;
 
                 Socket = null;
                 ReceiveLoopCancellation = null;
+                ReconnectLoopCancellation = null;
                 ReceiveLoopTask = null;
                 IsSocketConnected = false;
                 IsConnected = false;
             }
 
+            if (reconnectCancellationToDispose != null)
+            {
+                try { reconnectCancellationToDispose.Cancel(); } catch { }
+            }
+
             if (cancellationToDispose != null)
             {
-                try
-                {
-                    cancellationToDispose.Cancel();
-                }
-                catch
-                {
-                }
+                try { cancellationToDispose.Cancel(); } catch { }
             }
 
             if (socketToClose != null)
@@ -236,19 +245,11 @@ namespace JellyfishLighting.ExtensionDriver
 
             if (receiveLoopToWait != null)
             {
-                try
-                {
-                    receiveLoopToWait.Wait(2000);
-                }
-                catch
-                {
-                }
+                try { receiveLoopToWait.Wait(2000); } catch { }
             }
 
-            if (cancellationToDispose != null)
-            {
-                cancellationToDispose.Dispose();
-            }
+            if (cancellationToDispose != null) cancellationToDispose.Dispose();
+            if (reconnectCancellationToDispose != null) reconnectCancellationToDispose.Dispose();
 
             IsSocketConnected = false;
             IsConnected = false;
@@ -258,9 +259,12 @@ namespace JellyfishLighting.ExtensionDriver
         public override void SendMethod(string message, object[] parameters)
         {
             ClientWebSocket socket;
+            int generation;
+
             lock (SocketSyncRoot)
             {
                 socket = Socket;
+                generation = ConnectionGeneration;
             }
 
             if (!IsSocketConnected || socket == null || socket.State != WebSocketState.Open)
@@ -284,7 +288,7 @@ namespace JellyfishLighting.ExtensionDriver
             {
                 LastTransportError = ex.Message;
                 Log("JellyfishLighting - SendMethod failed: " + LastTransportError);
-                HandleConnectionLoss("Send failed: " + LastTransportError, ConnectionGeneration);
+                HandleConnectionLoss("Send failed: " + LastTransportError, generation);
             }
         }
 
@@ -326,6 +330,7 @@ namespace JellyfishLighting.ExtensionDriver
             }
             catch (OperationCanceledException)
             {
+                // Expected when stopping/canceling loops.
             }
             catch (Exception ex)
             {
@@ -364,7 +369,12 @@ namespace JellyfishLighting.ExtensionDriver
             {
                 IsSocketConnected = false;
                 IsConnected = false;
-                ConnectionLost?.Invoke(LastTransportError);
+
+                var previousNotified = Interlocked.Exchange(ref OfflineNotifiedGeneration, generation);
+                if (previousNotified != generation)
+                {
+                    ConnectionLost?.Invoke(LastTransportError);
+                }
             }
         }
 
@@ -375,13 +385,24 @@ namespace JellyfishLighting.ExtensionDriver
                 return;
             }
 
+            CancellationToken token;
+            lock (SocketSyncRoot)
+            {
+                if (ReconnectLoopCancellation == null)
+                {
+                    ReconnectLoopCancellation = new CancellationTokenSource();
+                }
+
+                token = ReconnectLoopCancellation.Token;
+            }
+
             Task.Run(async () =>
             {
                 try
                 {
                     var attempt = 0;
 
-                    while (!IsStopping)
+                    while (!IsStopping && !token.IsCancellationRequested)
                     {
                         var index = attempt < ReconnectBackoffSeconds.Length
                             ? attempt
@@ -392,9 +413,9 @@ namespace JellyfishLighting.ExtensionDriver
                         Log("JellyfishLighting - reconnect attempt " + (attempt + 1) +
                             " in " + delaySeconds + "s");
 
-                        await Task.Delay(TimeSpan.FromSeconds(delaySeconds)).ConfigureAwait(false);
+                        await Task.Delay(TimeSpan.FromSeconds(delaySeconds), token).ConfigureAwait(false);
 
-                        if (IsStopping)
+                        if (IsStopping || token.IsCancellationRequested)
                         {
                             return;
                         }
@@ -409,11 +430,15 @@ namespace JellyfishLighting.ExtensionDriver
                         attempt++;
                     }
                 }
+                catch (OperationCanceledException)
+                {
+                    // Expected on stop.
+                }
                 finally
                 {
                     Interlocked.Exchange(ref ReconnectInProgress, 0);
                 }
-            });
+            }, token);
         }
 
         public void SendJson(string json)
