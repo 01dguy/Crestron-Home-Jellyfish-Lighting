@@ -1,0 +1,85 @@
+{
+  "CrestronSerialDeviceApi": {
+    "DeviceSupport": {},
+    "DeviceSupport2": [],
+    "GeneralInformation": {
+      "DeviceType": "Extension Device",
+      "Manufacturer": "JellyFish Lighting",
+      "BaseModel": "LAN Controller",
+      "VersionDate": "2026-03-06 00:00:00",
+      "DriverVersion": "0.8.000.0000",
+      "SdkVersion": "6.0.0",
+      "Description": "Crestron Home extension driver scaffold for JellyFish LAN WebSocket API",
+      "Guid": "5fd36a76-9cc8-4d66-bfdb-421585fd4372",
+      "ExtensionDeviceData": {
+        "IsExtensionDevice": true,
+        "IsMediaDevice": false,
+        "IsMediaSource": false
+      },
+      "SupportedSeries": [
+        "JellyFish Exterior Lighting"
+      ],
+      "SupportedModels": [
+        "LAN WebSocket API"
+      ]
+    },
+    "Api": {
+      "Communication": {
+        "CommunicationType": 5,
+        "Protocol": -1,
+        "Baud": -1,
+        "Parity": -1,
+        "HwHandshake": -1,
+        "SwHandshake": -1,
+        "DataBits": 0,
+        "StopBits": -1,
+        "Port": 9000,
+        "EnableAutoPolling": true,
+        "EnableAutoReconnect": true,
+        "TimeBetweenCommands": 200,
+        "ResponseTimeout": 5000,
+        "WaitForResponse": false,
+        "IpProtocol": 0,
+        "IsUserAdjustable": true,
+        "Authentication": {
+          "Type": "None",
+          "Required": false
+        },
+        "IsSecure": false,
+        "UserAdjustableProperties": [],
+        "DeviceId": 0
+      }
+    },
+    "UserAttributes": [
+      {
+        "TypeName": "Custom",
+        "ParameterId": "ControllerHost",
+        "Label": "Controller Host",
+        "Description": "JellyFish controller hostname or IP (for WebSocket)",
+        "Persistent": true,
+        "RequiredForConnection": "Before",
+        "Data": {
+          "DataType": "String",
+          "Mask": "",
+          "DefaultValue": ""
+        }
+      },
+      {
+        "TypeName": "Custom",
+        "ParameterId": "ControllerPort",
+        "Label": "Controller Port",
+        "Description": "WebSocket port on JellyFish controller",
+        "Persistent": true,
+        "RequiredForConnection": "Before",
+        "Data": {
+          "DataType": "String",
+          "Mask": "",
+          "DefaultValue": "9000"
+        }
+      }
+    ],
+    "Dependencies": [
+      ""
+    ]
+  }
+}

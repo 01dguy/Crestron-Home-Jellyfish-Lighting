@@ -1,63 +1,72 @@
-# Crestron-Home-Extension-Driver-Template
+# JellyFish Lighting Crestron Home Driver
 
-These files make up a template for writing extension drivers for Crestron Home. Normally this project is shared as a full Visual Studio solution zip, but the complete solution is larger than GitHub's file-size limits.
+This project is a JellyFish Crestron Home extension scaffold aligned to the LAN WebSocket API (`toCtlrGet`, `toCtlrSet`, `fromCtlr`).
 
-## Converting this template into a production Crestron Home driver
+## Current implemented behaviors
 
-This repository is the starting point. A functioning driver still requires device-specific transport logic, protocol parsing, command/feedback wiring, and metadata/UI completion.
+- WebSocket transport scaffold with configurable host/port and `ws`/`wss` URI generation (default is non-secure `ws`).
+- Transport now exposes an inbound frame callback (`ReceiveJsonFromSocket(...)` -> `InboundJsonReceived`) so received websocket text frames can be routed directly into protocol parsing.
+- Poll flow sends:
+  - `patternFileList`
+  - `zones`
+- Inbound `fromCtlr` handling for:
+  - `patternFileList` (folder/pattern counts)
+  - `zones` (cached known zone names)
+  - `patternFileData` (caches `jsonData`, parses speed/brightness)
+  - `runPattern` acks (including per-zone `id` responses)
+  - `ledPower` updates
+- Outbound command helpers:
+  - Basic `runPattern` (on/off)
+  - Advanced `runPattern` with full stringified data payload
+  - Pattern file data request
+- Pattern data cache + update helpers:
+  - `SetBrightness(...)`
+  - `SetSpeed(...)`
+- Status aggregation separates the latest power status from command/ack status to reduce rapid status churn in UI.
+- Main page now surfaces active scene and current speed, aligned to driver properties used in the UI definition.
 
-## Documentation status
+## Captured firmware behavior (4.1.13)
 
-### Received
+Validated against provided captures for:
+- Connection: `ws://` (non-secure)
+- Zones: `Garage Door`, `Speaker Soffit`
+- Pattern: `Thanksgiving/Thanksgiving paint`
+- Per-zone `runPattern` acknowledgements via both `id` and `zoneName`
+- Repeated advanced `runPattern` updates carrying escaped `data` JSON with `runData.speed` and `runData.brightness`
 
-- Driver SDK v1 landing page:  
-  https://sdkcon78221.crestron.com/sdk/Crestron_Certified_Drivers_SDK/Content/Topics/Driver-SDK-V1/Driver-SDK-V1.htm
-- Create a Project (Simpl# required interfaces/classes starting point):  
-  https://sdkcon78221.crestron.com/sdk/Crestron_Certified_Drivers_SDK/Content/Topics/Driver-SDK-V1/Create-a-Driver/Create-a-Project.htm
-- Extension Drivers overview:  
-  https://sdkcon78221.crestron.com/sdk/Crestron_Certified_Drivers_SDK/Content/Topics/Driver-SDK-V1/Create-a-Driver/Device-Types/Extensions/Extension-Drivers.htm
-- UI Files reference (`UiDefinition.xml` structure and supported definitions):  
-  https://sdkcon78221.crestron.com/sdk/Crestron_Certified_Drivers_SDK/Content/Topics/Driver-SDK-V1/Create-a-Driver/Device-Types/Extensions/UI-Files.htm
-- UI translation guidance for `en-US.json` (same UI Files page, Translations section):  
-  https://sdkcon78221.crestron.com/sdk/Crestron_Certified_Drivers_SDK/Content/Topics/Driver-SDK-V1/Create-a-Driver/Device-Types/Extensions/UI-Files.htm#Translat
-- Crestron Device Driver SDK API reference (full class/member docs):  
-  https://sdkcon78221.crestron.com/downloads/CrestronCertifiedDriversAPI/html/R_Project_Crestron_Certified_Drivers_SDK_Documentation.htm
-- Driver JSON schema reference:  
-  https://sdkcon78221.crestron.com/sdk/Crestron_Certified_Drivers_SDK/Content/Topics/Driver-SDK-V1/API-Reference/Driver-JSON-Schema/Driver-JSON-Schema.htm
-- Driver JSON schema API details (property/member-level reference):  
-  https://sdkcon78221.crestron.com/sdk/Crestron_Certified_Drivers_SDK/Content/Topics/Driver-SDK-V1/API-Reference/Driver-JSON-Schema/API/API.htm
-- SDK Architecture (framework and best-practice guidance):  
-  https://sdkcon78221.crestron.com/sdk/Crestron_Certified_Drivers_SDK/Content/Topics/Driver-SDK-V1/SDK-Framework/SDK-Architecture.htm
-- Crestron Driver SDK Best Practices:  
-  https://sdkcon78221.crestron.com/sdk/Crestron_Certified_Drivers_SDK/Content/Topics/Best-Practices/Best-Practices.htm
+## Notes
 
-### Still needed (specific links)
+- Transport now includes real websocket connect/send/receive handling using `ClientWebSocket`; inbound text frames are routed via `ReceiveJsonFromSocket(...)`.
+- Metadata default communication port is set to `9000` for current controller/API Explorer usage.
 
-Please share direct links to the exact pages for:
+## Next production step
 
-1. Optional: transport implementation examples for your specific target protocol/device class (helpful for production behavior, but not required for using this basic template).
+Harden reconnection/backoff and add integration tests against a mock websocket controller endpoint.
 
-> Note: Packaging/Manifest Utility steps can be handled at the end and are not required to start core driver implementation.
+## Working locally (no PR required)
 
-## Implementation plan mapped to this template
+If you are applying changes in your own local repo and want to keep everything on your current branch:
 
-1. Define v1 feature scope for a target device (power, inputs, volume, mute, feedback/events).
-2. Build device transport/session handling in `Device_Name_Transport.cs`.
-3. Implement command format + response parsing in `Device_Name_Protocol.cs`.
-4. Connect lifecycle, actions, and feedback publication in `Device_Name.cs`.
-5. Finalize runtime settings/metadata in `Settings_Data.cs` and `Device_Name.json`, and add UI translation strings in `en-US.json`.
-6. Finalize UI metadata in `UiDefinition.xml`.
-7. Validate on hardware (or an emulator) and iterate on timing/error-handling edge cases.
-8. Perform end-of-cycle packaging/manifest steps after functional behavior is complete.
+- Use `git apply <patchfile.patch>` when you only want to apply file changes to your working tree/index.
+- Use `git am <patchfile.patch>` only when the patch is an email-style commit you want to import *as a commit* with author/message metadata.
 
-## Immediate next step from the docs provided
+For this project workflow, `git apply` is usually the right choice when you are iterating locally and creating files directly in-place.
 
-Using the "Create a Project," "Extension Drivers," "UI Files," and full SDK API reference, we can now begin implementation by replacing template placeholders with concrete driver identity values and scaffolding required driver classes/methods directly against the API docs before filling in transport/protocol specifics.
+Typical local flow:
 
-## Device details needed before coding
+```bash
+# from repo root
+git apply changes.patch
+# resolve rejects if any, then
+git add .
+git commit -m "Apply local Jellyfish driver updates"
+```
 
-- Manufacturer + exact model number(s).
-- Firmware version(s) to support.
-- Official protocol/API reference for the device.
-- Required commands/feedback for v1.
-- Known quirks (rate limits, login/auth flow, warmup timing, unsolicited feedback behavior).
+If the patch does not apply cleanly, use:
+
+```bash
+git apply --reject --whitespace=fix changes.patch
+```
+
+This keeps you on the same path and branch without needing to open a PR unless you choose to later.
+
