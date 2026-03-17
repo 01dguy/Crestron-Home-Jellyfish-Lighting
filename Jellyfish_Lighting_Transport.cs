@@ -10,6 +10,8 @@ namespace JellyfishLighting.ExtensionDriver
 	public class Jellyfish_Lighting_Transport : ATransportDriver
 	{
 		public Action<string> InboundJsonReceived;
+		public Action<string> ConnectionLost;
+		public Action<bool> ConnectionEstablished;
 		public Jellyfish_Lighting Device;
 
 		public bool IsSocketConnected;
@@ -45,6 +47,7 @@ namespace JellyfishLighting.ExtensionDriver
 
 		public override void Start()
 		{
+			var wasConnected = IsSocketConnected;
 			Stop();
 
 			if (string.IsNullOrEmpty(ControllerHost))
@@ -77,6 +80,7 @@ namespace JellyfishLighting.ExtensionDriver
 
 				ReceiveTask = Task.Run(() => ReceiveLoop(ReceiveCancellation.Token));
 				Log("JellyfishLighting - websocket connected");
+				ConnectionEstablished?.Invoke(wasConnected);
 			}
 			catch (Exception ex)
 			{
@@ -85,6 +89,7 @@ namespace JellyfishLighting.ExtensionDriver
 				IsConnected = false;
 				Log("JellyfishLighting - transport start exception: " + ex.Message);
 				SafeCleanupSocket();
+				ConnectionLost?.Invoke(LastTransportError);
 			}
 		}
 
@@ -173,6 +178,7 @@ namespace JellyfishLighting.ExtensionDriver
 			{
 				LastTransportError = ex.Message;
 				Log("JellyfishLighting - send exception: " + ex.Message);
+				ConnectionLost?.Invoke(LastTransportError);
 				Stop();
 			}
 		}
@@ -221,6 +227,7 @@ namespace JellyfishLighting.ExtensionDriver
 							Log("JellyfishLighting - " + LastTransportError);
 							IsSocketConnected = false;
 							IsConnected = false;
+							ConnectionLost?.Invoke(LastTransportError);
 							return;
 						}
 
@@ -240,6 +247,7 @@ namespace JellyfishLighting.ExtensionDriver
 					Log("JellyfishLighting - receive exception: " + ex.Message);
 					IsSocketConnected = false;
 					IsConnected = false;
+					ConnectionLost?.Invoke(LastTransportError);
 					return;
 				}
 			}
