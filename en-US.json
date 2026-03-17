@@ -1,7 +1,16 @@
 {
   "MainPageTitle": "JellyFish Lighting",
   "StatusTextLabel": "Status / Zones",
-  "OnlineLabel": "Online / Brightness",
+  "SceneLabel": "Scene / Online",
+  "PowerSubheaderLabel": "Power",
+  "PowerToggleLabel": "Pattern Power",
+  "ZonesLabel": "Zones (comma-separated)",
+  "ScenesSubheaderLabel": "Scenes",
+  "ParentScenesLabel": "Choose scene category",
+  "ChildScenesPageTitle": "Scene Category",
+  "SelectedParentLabel": "Selected Category",
+  "ChildScenesLabel": "Choose scene",
+  "BackToMainLabel": "Back to main",
   "SettingsPageTitle": "Settings",
   "PollingSubheaderLabel": "WebSocket Polling",
   "UseSslLabel": "Use WSS",
@@ -10,9 +19,5 @@
   "ButtonSettingsLabel": "Settings",
   "SaveButtonName": "Save",
   "RefreshNowLabel": "Refresh now",
-  "GetPatternsAndZonesLabel": "Get patterns + zones",
-  "PowerOnLabel": "Power on",
-  "PowerOffLabel": "Power off",
-  "SpeedLabel": "Speed",
-  "SceneLabel": "Scene / Speed"
+  "GetPatternsAndZonesLabel": "Get patterns + zones"
 }

@@ -2,20 +2,61 @@
 <uidefinition xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
               xsi:noNamespaceSchemaLocation="https://prd-use-rad-assets.azurewebsites.net/ExtensionsSchemaDefinition.xsd">
   <version ver="1.0"/>
-  <tile icon="#icSun" navigation="show:MainPage" showinhomepage="#true" showinroompage="#false"/>
+
+  <tile icon="#icSun"
+        status="{StatusText}"
+        action="command:TogglePatternPower"
+        navigation="show:MainPage"
+        showinhomepage="#true"
+        showinroompage="#true"/>
+
   <layouts>
     <layout id="MainPage" title="^MainPageTitle" isdefaultlayout="#true">
       <controls>
         <textdisplay id="StatusTextId" title="^StatusTextLabel" line1label="{StatusText}" line2label="{ZoneSummary}"/>
-        <textdisplay id="OnlineTextId" title="^OnlineLabel" line1label="{IsOnline}" line2label="{Brightness}"/>
-        <textdisplay id="SceneTextId" title="^SceneLabel" line1label="{ActiveScene}" line2label="{Speed}"/>
+        <textdisplay id="SceneTextId" title="^SceneLabel" line1label="{ActiveScene}" line2label="{IsOnline}"/>
+
+        <subheader id="PowerSubheader" label="^PowerSubheaderLabel"/>
+        <toggle id="PowerToggleId" label="^PowerToggleLabel" secondarylabel="{StatusText}" value="{PowerState}"/>
+
+        <textentry id="ZonesEntryId" label="^ZonesLabel" value="{SelectedZones}"/>
+
+        <subheader id="ScenesSubheader" label="^ScenesSubheaderLabel"/>
+        <listbutton id="ParentScenesListButtonId"
+                    label="^ParentScenesLabel"
+                    source="{ParentScenes}"
+                    itemlabel="{.name}"
+                    action="command:SelectParentScene"
+                    actionparameters="{.id},{.name}"
+                    navigation="show:ChildScenesPage"
+                    navigationparameters="{.id},{.name}"/>
+
         <button id="RefreshButtonId" label="^RefreshNowLabel" action="command:RefreshNow"/>
         <button id="GetPatternsButtonId" label="^GetPatternsAndZonesLabel" action="command:GetPatternsAndZones"/>
-        <button id="PowerOnButtonId" label="^PowerOnLabel" action="command:PowerOn"/>
-        <button id="PowerOffButtonId" label="^PowerOffLabel" action="command:PowerOff"/>
         <button id="SettingsButtonId" label="^ButtonSettingsLabel" navigation="show:SettingsPage" action="command:ShowSettings"/>
       </controls>
     </layout>
+
+    <layout id="ChildScenesPage"
+            title="^ChildScenesPageTitle"
+            subtitle="{$ParentSceneName}"
+            inputparameters="$ParentSceneId,$ParentSceneName">
+      <controls>
+        <textdisplay id="SelectedParentTextId" title="^SelectedParentLabel" line1label="{$ParentSceneName}" line2label="{ActiveScene}"/>
+
+        <listbutton id="ChildScenesListButtonId"
+                    label="^ChildScenesLabel"
+                    source="{ChildScenes}"
+                    itemlabel="{.name}"
+                    action="command:RunChildScene"
+                    actionparameters="{$ParentSceneId},{$ParentSceneName},{.id},{.name}"/>
+
+        <toggle id="ChildPagePowerToggleId" label="^PowerToggleLabel" secondarylabel="{StatusText}" value="{PowerState}"/>
+
+        <button id="BackToMainButtonId" label="^BackToMainLabel" navigation="show:MainPage"/>
+      </controls>
+    </layout>
+
     <layout id="SettingsPage" title="^SettingsPageTitle">
       <controls>
         <subheader id="PollingSubheader" label="^PollingSubheaderLabel"/>
@@ -27,5 +68,6 @@
       </controls>
     </layout>
   </layouts>
+
   <alerts/>
 </uidefinition>
