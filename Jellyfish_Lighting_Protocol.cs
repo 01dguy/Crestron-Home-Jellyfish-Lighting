@@ -12,11 +12,6 @@ namespace JellyfishLighting.ExtensionDriver
         private readonly object _stateLock = new object();
         private bool HasStarted;
 
-        // Used to avoid replaying stale cached state immediately after reconnect
-        // if a user command was just sent.
-        private long LastOutboundCommandTicks;
-        private long ReconnectStartedTicks;
-
         public Jellyfish_Lighting.UiUpdateDelegate UI_Update;
 
         public string LastStatus = "Disconnected";
@@ -35,6 +30,14 @@ namespace JellyfishLighting.ExtensionDriver
         private string[] LastZoneNames = new string[0];
         private string[] KnownZones = new string[0];
         private string CachedPatternData = string.Empty;
+
+        // Pattern list cache for UI scene pickers
+        private string CachedPatternFileListJson = string.Empty;
+        private string[] CachedPatternPaths = new string[0];
+
+        // Optional reconnect restore guard
+        private long LastOutboundCommandTicks;
+        private long ReconnectStartedTicks;
 
         public Jellyfish_Lighting_Protocol(Jellyfish_Lighting_Transport transport, byte id) : base(transport, id)
         {
@@ -83,7 +86,7 @@ namespace JellyfishLighting.ExtensionDriver
                 return;
             }
 
-            // Configure only. Transport lifecycle is handled elsewhere.
+            // Configure transport only. Transport lifecycle handled by framework/device.
             ApplyTransportConfiguration();
 
             if (TransportLayer.IsSocketConnected)
@@ -94,7 +97,7 @@ namespace JellyfishLighting.ExtensionDriver
                     LastOnlineState = true;
                 }
 
-                UI_Update?.Invoke(); // immediate UI reflection
+                UI_Update?.Invoke();
                 PollNow();
             }
             else
@@ -161,6 +164,7 @@ namespace JellyfishLighting.ExtensionDriver
 
             string patternFile;
             string[] zoneNames;
+
             lock (_stateLock)
             {
                 patternFile = LastPatternFile;
@@ -411,6 +415,12 @@ namespace JellyfishLighting.ExtensionDriver
                 int patternCount;
                 ExtractPatternCounts(json, out folderCount, out patternCount);
                 newAckStatus = string.Format("Pattern list: {0} folders, {1} patterns", folderCount, patternCount);
+
+                lock (_stateLock)
+                {
+                    CachedPatternFileListJson = json;
+                    CachedPatternPaths = ExtractPatternPaths(json);
+                }
             }
 
             if (json.IndexOf("\"zones\"", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -554,8 +564,7 @@ namespace JellyfishLighting.ExtensionDriver
                 lastOutboundTicks = LastOutboundCommandTicks;
             }
 
-            // If a newer outbound command has already been sent after reconnect began,
-            // don't replay stale cached state.
+            // Skip stale replay if a newer command was already sent.
             if (reconnectTicks > 0 && lastOutboundTicks > reconnectTicks)
             {
                 lock (_stateLock)
@@ -602,6 +611,89 @@ namespace JellyfishLighting.ExtensionDriver
             }
         }
 
+        // ======================
+        // UI Scene List Helpers
+        // ======================
+
+        public string GetParentScenesAsUiListJson()
+        {
+            string[] paths;
+            lock (_stateLock)
+            {
+                paths = CachedPatternPaths ?? new string[0];
+            }
+
+            var uniqueParents = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (var i = 0; i < paths.Length; i++)
+            {
+                var path = paths[i];
+                if (string.IsNullOrEmpty(path))
+                {
+                    continue;
+                }
+
+                var idx = path.IndexOf('/');
+                var parent = idx > 0 ? path.Substring(0, idx).Trim() : path.Trim();
+
+                if (!string.IsNullOrEmpty(parent))
+                {
+                    uniqueParents.Add(parent);
+                }
+            }
+
+            var list = new System.Collections.Generic.List<string>(uniqueParents);
+            list.Sort(StringComparer.OrdinalIgnoreCase);
+
+            return BuildUiListJsonFromNames(list);
+        }
+
+        public string GetChildScenesAsUiListJson(string parentId)
+        {
+            if (string.IsNullOrEmpty(parentId))
+            {
+                return "[]";
+            }
+
+            string[] paths;
+            lock (_stateLock)
+            {
+                paths = CachedPatternPaths ?? new string[0];
+            }
+
+            var parentPrefix = parentId + "/";
+            var uniqueChildren = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (var i = 0; i < paths.Length; i++)
+            {
+                var path = paths[i];
+                if (string.IsNullOrEmpty(path))
+                {
+                    continue;
+                }
+
+                if (!path.StartsWith(parentPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var child = path.Substring(parentPrefix.Length).Trim();
+                if (!string.IsNullOrEmpty(child))
+                {
+                    uniqueChildren.Add(child);
+                }
+            }
+
+            var list = new System.Collections.Generic.List<string>(uniqueChildren);
+            list.Sort(StringComparer.OrdinalIgnoreCase);
+
+            return BuildUiListJsonFromNames(list);
+        }
+
+        // ======================
+        // Status Helpers
+        // ======================
+
         private void UpdateLastStatus()
         {
             if (!string.IsNullOrEmpty(LastPowerStatus))
@@ -621,6 +713,10 @@ namespace JellyfishLighting.ExtensionDriver
                 LastStatus = LastAckStatus;
             }
         }
+
+        // ======================
+        // Outbound Builders
+        // ======================
 
         public static string BuildGetPatternListCommand()
         {
@@ -649,6 +745,10 @@ namespace JellyfishLighting.ExtensionDriver
             var escapedData = Escape(dataJson);
             return string.Format("{{\"cmd\":\"toCtlrSet\",\"runPattern\":{{\"file\":\"\",\"data\":\"{0}\",\"id\":\"\",\"state\":{1},\"zoneName\":[{2}]}}}}", escapedData, state, zones);
         }
+
+        // ======================
+        // Validation / Parsing
+        // ======================
 
         private static bool IsValidBasicRunPatternRequest(string filePath, string[] zoneNames, int state, string[] knownZones)
         {
@@ -798,9 +898,6 @@ namespace JellyfishLighting.ExtensionDriver
                 RegexOptions.IgnoreCase);
         }
 
-        // More robust extraction:
-        // 1) isolate zones object body
-        // 2) parse first-level quoted keys
         private static string[] ExtractZoneNames(string json)
         {
             if (string.IsNullOrEmpty(json))
@@ -808,7 +905,7 @@ namespace JellyfishLighting.ExtensionDriver
                 return new string[0];
             }
 
-            var zonesMatch = Regex.Match(json, "\\\"zones\\\"\\s*:\\s*\\{(?<body>.*)\\}\\s*\\}?", RegexOptions.IgnoreCase);
+            var zonesMatch = Regex.Match(json, "\\\"zones\\\"\\s*:\\s*\\{(?<body>.*)\\}\\s*\\}?", RegexOptions.IgnoreCase | RegexOptions.Singleline);
             if (!zonesMatch.Success)
             {
                 return new string[0];
@@ -902,7 +999,6 @@ namespace JellyfishLighting.ExtensionDriver
                 return value;
             }
 
-            // Safer explicit unescape ordering
             var sb = new StringBuilder(value.Length);
             for (var i = 0; i < value.Length; i++)
             {
@@ -966,6 +1062,83 @@ namespace JellyfishLighting.ExtensionDriver
             return first.Success ? first.Groups["item"].Value : null;
         }
 
+        private static string[] ExtractPatternPaths(string json)
+        {
+            if (string.IsNullOrEmpty(json))
+            {
+                return new string[0];
+            }
+
+            var folderMatches = Regex.Matches(
+                json,
+                "\\\"(?<folder>[^\\\"]+)\\\"\\s*:\\s*\\[(?<items>.*?)\\]",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+            var result = new System.Collections.Generic.List<string>();
+
+            for (var i = 0; i < folderMatches.Count; i++)
+            {
+                var folder = folderMatches[i].Groups["folder"].Value;
+                var items = folderMatches[i].Groups["items"].Value;
+
+                if (string.IsNullOrEmpty(folder) ||
+                    string.Equals(folder, "cmd", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(folder, "fromCtlr", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(folder, "patternFileList", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(folder, "folders", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var nameMatches = Regex.Matches(
+                    items,
+                    "\\\"name\\\"\\s*:\\s*\\\"(?<name>[^\\\"]+)\\\"",
+                    RegexOptions.IgnoreCase);
+
+                for (var j = 0; j < nameMatches.Count; j++)
+                {
+                    var name = nameMatches[j].Groups["name"].Value;
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        result.Add(folder + "/" + name);
+                    }
+                }
+            }
+
+            return result.ToArray();
+        }
+
+        private static string BuildUiListJsonFromNames(System.Collections.Generic.List<string> names)
+        {
+            if (names == null || names.Count == 0)
+            {
+                return "[]";
+            }
+
+            var sb = new StringBuilder();
+            sb.Append("[");
+
+            for (var i = 0; i < names.Count; i++)
+            {
+                var n = names[i] ?? string.Empty;
+                var escaped = Escape(n);
+
+                if (i > 0)
+                {
+                    sb.Append(",");
+                }
+
+                sb.Append("{\"id\":\"");
+                sb.Append(escaped);
+                sb.Append("\",\"name\":\"");
+                sb.Append(escaped);
+                sb.Append("\"}");
+            }
+
+            sb.Append("]");
+            return sb.ToString();
+        }
+
         private static int ToPort(string value)
         {
             int parsed;
@@ -974,7 +1147,6 @@ namespace JellyfishLighting.ExtensionDriver
 
         private void ApplyTransportConfiguration()
         {
-            // Transport currently forces ws:// only.
             TransportLayer.Configure(ControllerHost, ControllerPort, Device.Settings.UseSsl);
         }
 

@@ -18,26 +18,36 @@ namespace JellyfishLighting.ExtensionDriver
         private const string StatusTextKey = "StatusText";
         private const string IsOnlineKey = "IsOnline";
         private const string ActiveSceneKey = "ActiveScene";
-        private const string BrightnessKey = "Brightness";
         private const string ZoneSummaryKey = "ZoneSummary";
-        private const string SpeedKey = "Speed";
+
+        private const string PowerStateKey = "PowerState";
+
+        private const string ParentScenesKey = "ParentScenes";
+        private const string ChildScenesKey = "ChildScenes";
+        private const string SelectedParentSceneIdKey = "SelectedParentSceneId";
+        private const string SelectedParentSceneNameKey = "SelectedParentSceneName";
+
         private const string PatternPathKey = "PatternPath";
         private const string SelectedZonesKey = "SelectedZones";
-        private const string RequestedBrightnessKey = "RequestedBrightness";
-        private const string RequestedSpeedKey = "RequestedSpeed";
+
         private const string UseSslKey = "UseSsl";
         private const string PollIntervalSecondsKey = "PollIntervalSeconds";
 
         private PropertyValue<string> StatusTextProperty;
         private PropertyValue<bool> IsOnlineProperty;
         private PropertyValue<string> ActiveSceneProperty;
-        private PropertyValue<int> BrightnessProperty;
         private PropertyValue<string> ZoneSummaryProperty;
-        private PropertyValue<int> SpeedProperty;
+
+        private PropertyValue<bool> PowerStateProperty;
+
+        private PropertyValue<string> ParentScenesProperty;
+        private PropertyValue<string> ChildScenesProperty;
+        private PropertyValue<string> SelectedParentSceneIdProperty;
+        private PropertyValue<string> SelectedParentSceneNameProperty;
+
         private PropertyValue<string> PatternPathProperty;
         private PropertyValue<string> SelectedZonesProperty;
-        private PropertyValue<int> RequestedBrightnessProperty;
-        private PropertyValue<int> RequestedSpeedProperty;
+
         private PropertyValue<bool> UseSslProperty;
         private PropertyValue<int> PollIntervalSecondsProperty;
 
@@ -80,8 +90,6 @@ namespace JellyfishLighting.ExtensionDriver
             DeviceProtocol = Protocol;
             DeviceProtocol.Initialize(DriverData);
 
-            // TEST LOG:
-            // Confirms driver initialization reached transport/protocol setup.
             Log("JellyfishLighting - Initialize complete.");
         }
 
@@ -90,15 +98,23 @@ namespace JellyfishLighting.ExtensionDriver
             StatusTextProperty = CreateProperty<string>(new PropertyDefinition(StatusTextKey, null, DevicePropertyType.String));
             IsOnlineProperty = CreateProperty<bool>(new PropertyDefinition(IsOnlineKey, null, DevicePropertyType.Boolean));
             ActiveSceneProperty = CreateProperty<string>(new PropertyDefinition(ActiveSceneKey, null, DevicePropertyType.String));
-            BrightnessProperty = CreateProperty<int>(new PropertyDefinition(BrightnessKey, null, DevicePropertyType.Int32));
             ZoneSummaryProperty = CreateProperty<string>(new PropertyDefinition(ZoneSummaryKey, null, DevicePropertyType.String));
-            SpeedProperty = CreateProperty<int>(new PropertyDefinition(SpeedKey, null, DevicePropertyType.Int32));
+
+            PowerStateProperty = CreateProperty<bool>(new PropertyDefinition(PowerStateKey, null, DevicePropertyType.Boolean));
+
+            ParentScenesProperty = CreateProperty<string>(new PropertyDefinition(ParentScenesKey, null, DevicePropertyType.String));
+            ChildScenesProperty = CreateProperty<string>(new PropertyDefinition(ChildScenesKey, null, DevicePropertyType.String));
+            SelectedParentSceneIdProperty = CreateProperty<string>(new PropertyDefinition(SelectedParentSceneIdKey, null, DevicePropertyType.String));
+            SelectedParentSceneNameProperty = CreateProperty<string>(new PropertyDefinition(SelectedParentSceneNameKey, null, DevicePropertyType.String));
+
             PatternPathProperty = CreateProperty<string>(new PropertyDefinition(PatternPathKey, null, DevicePropertyType.String));
             SelectedZonesProperty = CreateProperty<string>(new PropertyDefinition(SelectedZonesKey, null, DevicePropertyType.String));
-            RequestedBrightnessProperty = CreateProperty<int>(new PropertyDefinition(RequestedBrightnessKey, null, DevicePropertyType.Int32));
-            RequestedSpeedProperty = CreateProperty<int>(new PropertyDefinition(RequestedSpeedKey, null, DevicePropertyType.Int32));
+
             UseSslProperty = CreateProperty<bool>(new PropertyDefinition(UseSslKey, null, DevicePropertyType.Boolean));
             PollIntervalSecondsProperty = CreateProperty<int>(new PropertyDefinition(PollIntervalSecondsKey, null, DevicePropertyType.Int32));
+
+            ParentScenesProperty.Value = "[]";
+            ChildScenesProperty.Value = "[]";
 
             Commit();
         }
@@ -113,13 +129,13 @@ namespace JellyfishLighting.ExtensionDriver
             StatusTextProperty.Value = Protocol.LastStatus;
             IsOnlineProperty.Value = Protocol.LastOnlineState;
             ActiveSceneProperty.Value = Protocol.LastScene;
-            BrightnessProperty.Value = Protocol.LastBrightness;
             ZoneSummaryProperty.Value = Protocol.LastZoneSummary;
-            SpeedProperty.Value = Protocol.LastSpeed;
 
-            // CHANGED:
-            // Keep framework/device Connected state aligned with real protocol state.
-            // This avoids the earlier false "online" behavior from Connect().
+            PowerStateProperty.Value = string.Equals(
+                Protocol.LastPowerStatus,
+                "LED power is ON",
+                StringComparison.OrdinalIgnoreCase);
+
             Connected = Protocol.LastOnlineState;
 
             Commit();
@@ -129,18 +145,7 @@ namespace JellyfishLighting.ExtensionDriver
         public void RefreshNow()
         {
             Protocol?.PollNow();
-        }
-
-        [ProgrammableOperation("^PowerOnLabel")]
-        public void PowerOn()
-        {
-            Protocol?.SetPowerState(1);
-        }
-
-        [ProgrammableOperation("^PowerOffLabel")]
-        public void PowerOff()
-        {
-            Protocol?.SetPowerState(0);
+            RefreshSceneListsFromProtocol();
         }
 
         public void TriggerSceneUpdatedEvent()
@@ -162,41 +167,39 @@ namespace JellyfishLighting.ExtensionDriver
                     SaveSetting(Filename, Settings);
                     Protocol?.UpdatePollingInterval(Settings.PollIntervalSeconds);
 
-                    // TEST LOG:
                     Log("JellyfishLighting - SaveSettings useSsl=" + Settings.UseSsl +
                         " pollInterval=" + Settings.PollIntervalSeconds);
                     break;
 
                 case "RefreshNow":
                     Protocol?.PollNow();
+                    RefreshSceneListsFromProtocol();
                     break;
 
                 case "GetPatternsAndZones":
                     Protocol?.PollNow();
+                    RefreshSceneListsFromProtocol();
                     break;
 
-                case "PowerOn":
-                    Protocol?.SetPowerState(1);
+                case "TogglePatternPower":
+                    TogglePatternPower();
                     break;
 
-                case "PowerOff":
-                    Protocol?.SetPowerState(0);
+                case "SelectParentScene":
+                    SelectParentScene(parameters);
                     break;
 
-                case "RequestPatternData":
-                    RequestPatternData();
+                case "RunChildScene":
+                    RunChildScene(parameters);
                     break;
 
+                // Compatibility/fallback commands
                 case "RunSelectedPattern":
                     RunSelectedPattern();
                     break;
 
-                case "SetSelectedBrightness":
-                    SetSelectedBrightness();
-                    break;
-
-                case "SetSelectedSpeed":
-                    SetSelectedSpeed();
+                case "PowerOff":
+                    Protocol?.SetPowerState(0);
                     break;
             }
 
@@ -209,8 +212,6 @@ namespace JellyfishLighting.ExtensionDriver
             switch (propertyKey)
             {
                 case UseSslKey:
-                    // CHANGED:
-                    // Persisted for compatibility, but transport ignores SSL and forces ws://.
                     UseSslProperty.Value = ToBoolean(value);
                     break;
 
@@ -230,19 +231,25 @@ namespace JellyfishLighting.ExtensionDriver
                     SelectedZonesProperty.Value = ToText(value);
                     break;
 
-                case RequestedBrightnessKey:
-                    var requestedBrightness = ToInt(value);
-                    if (requestedBrightness != null)
-                    {
-                        RequestedBrightnessProperty.Value = (int)requestedBrightness;
-                    }
+                case SelectedParentSceneIdKey:
+                    SelectedParentSceneIdProperty.Value = ToText(value);
                     break;
 
-                case RequestedSpeedKey:
-                    var requestedSpeed = ToInt(value);
-                    if (requestedSpeed != null)
+                case SelectedParentSceneNameKey:
+                    SelectedParentSceneNameProperty.Value = ToText(value);
+                    break;
+
+                case PowerStateKey:
+                    var desiredPower = ToBoolean(value);
+                    PowerStateProperty.Value = desiredPower;
+
+                    if (desiredPower)
                     {
-                        RequestedSpeedProperty.Value = (int)requestedSpeed;
+                        RunSelectedPattern();
+                    }
+                    else
+                    {
+                        Protocol?.SetPowerState(0);
                     }
                     break;
             }
@@ -259,15 +266,8 @@ namespace JellyfishLighting.ExtensionDriver
 
         private static bool ToBoolean<T>(T value)
         {
-            if (value == null)
-            {
-                return false;
-            }
-
-            if (value is bool)
-            {
-                return (bool)(object)value;
-            }
+            if (value == null) return false;
+            if (value is bool) return (bool)(object)value;
 
             bool parsed;
             return bool.TryParse(value.ToString(), out parsed) && parsed;
@@ -275,15 +275,8 @@ namespace JellyfishLighting.ExtensionDriver
 
         private static int? ToInt<T>(T value)
         {
-            if (value == null)
-            {
-                return null;
-            }
-
-            if (value is int)
-            {
-                return (int)(object)value;
-            }
+            if (value == null) return null;
+            if (value is int) return (int)(object)value;
 
             int parsed;
             return int.TryParse(value.ToString(), out parsed) ? parsed : (int?)null;
@@ -294,25 +287,68 @@ namespace JellyfishLighting.ExtensionDriver
             return value == null ? string.Empty : value.ToString();
         }
 
-        private void RequestPatternData()
+        private void TogglePatternPower()
         {
             if (Protocol == null)
             {
                 return;
             }
 
-            var patternPath = (PatternPathProperty.Value ?? string.Empty).Trim();
-            var separatorIndex = patternPath.LastIndexOf('/');
+            var isOn = string.Equals(
+                Protocol.LastPowerStatus,
+                "LED power is ON",
+                StringComparison.OrdinalIgnoreCase);
 
-            if (separatorIndex <= 0 || separatorIndex == patternPath.Length - 1)
+            if (isOn)
             {
-                SetUserStatus("Enter pattern path as folder/pattern (example: Holidays/CandyCane).", Protocol.LastOnlineState);
+                Protocol.SetPowerState(0);
                 return;
             }
 
-            var folder = patternPath.Substring(0, separatorIndex);
-            var patternName = patternPath.Substring(separatorIndex + 1);
-            Protocol.RequestPatternFileData(folder, patternName);
+            RunSelectedPattern();
+        }
+
+        private void SelectParentScene(string[] parameters)
+        {
+            // Expected: [parentId, parentName]
+            if (parameters == null || parameters.Length < 1)
+            {
+                return;
+            }
+
+            var parentId = parameters[0] ?? string.Empty;
+            var parentName = parameters.Length > 1 ? (parameters[1] ?? string.Empty) : parentId;
+
+            SelectedParentSceneIdProperty.Value = parentId;
+            SelectedParentSceneNameProperty.Value = parentName;
+
+            ChildScenesProperty.Value = GetChildScenesJsonOrEmpty(parentId);
+
+            Commit();
+        }
+
+        private void RunChildScene(string[] parameters)
+        {
+            // Expected: [parentId,parentName,childId,childName]
+            if (Protocol == null || parameters == null || parameters.Length < 3)
+            {
+                return;
+            }
+
+            var parentId = !string.IsNullOrEmpty(parameters[0])
+                ? parameters[0]
+                : SelectedParentSceneIdProperty.Value;
+
+            var childName = parameters.Length > 3 ? parameters[3] : parameters[2];
+
+            if (string.IsNullOrEmpty(parentId) || string.IsNullOrEmpty(childName))
+            {
+                SetUserStatus("Select a valid parent and child scene.", Protocol.LastOnlineState);
+                return;
+            }
+
+            PatternPathProperty.Value = parentId + "/" + childName;
+            RunSelectedPattern();
         }
 
         private void RunSelectedPattern()
@@ -332,45 +368,43 @@ namespace JellyfishLighting.ExtensionDriver
             var patternPath = (PatternPathProperty.Value ?? string.Empty).Trim();
             if (string.IsNullOrEmpty(patternPath))
             {
-                SetUserStatus("Enter a pattern path before running (folder/pattern).", Protocol.LastOnlineState);
+                SetUserStatus("Select a scene before turning on.", Protocol.LastOnlineState);
                 return;
             }
 
             Protocol.RunPattern(patternPath, zones, 1);
         }
 
-        private void SetSelectedBrightness()
+        private void RefreshSceneListsFromProtocol()
         {
-            if (Protocol == null)
-            {
-                return;
-            }
+            ParentScenesProperty.Value = GetParentScenesJsonOrEmpty();
 
-            var zones = ParseZones(SelectedZonesProperty.Value);
-            if (zones.Length == 0)
-            {
-                SetUserStatus("Select zones before setting brightness. Use comma-separated names.", Protocol.LastOnlineState);
-                return;
-            }
-
-            Protocol.SetBrightness(RequestedBrightnessProperty.Value, zones);
+            var parentId = SelectedParentSceneIdProperty.Value ?? string.Empty;
+            ChildScenesProperty.Value = string.IsNullOrEmpty(parentId)
+                ? "[]"
+                : GetChildScenesJsonOrEmpty(parentId);
         }
 
-        private void SetSelectedSpeed()
+        private string GetParentScenesJsonOrEmpty()
         {
             if (Protocol == null)
             {
-                return;
+                return "[]";
             }
 
-            var zones = ParseZones(SelectedZonesProperty.Value);
-            if (zones.Length == 0)
+            var result = Protocol.GetParentScenesAsUiListJson();
+            return string.IsNullOrEmpty(result) ? "[]" : result;
+        }
+
+        private string GetChildScenesJsonOrEmpty(string parentId)
+        {
+            if (Protocol == null || string.IsNullOrEmpty(parentId))
             {
-                SetUserStatus("Select zones before setting speed. Use comma-separated names.", Protocol.LastOnlineState);
-                return;
+                return "[]";
             }
 
-            Protocol.SetSpeed(RequestedSpeedProperty.Value, zones);
+            var result = Protocol.GetChildScenesAsUiListJson(parentId);
+            return string.IsNullOrEmpty(result) ? "[]" : result;
         }
 
         private void SetUserStatus(string message, bool isOnline)
@@ -416,25 +450,22 @@ namespace JellyfishLighting.ExtensionDriver
 
             var temp = GetSetting(Filename);
             Settings = temp != null ? (Settings_Data)temp : new Settings_Data();
-
-            // Keep the setting file present and normalized.
             SaveSetting(Filename, Settings);
 
             UseSslProperty.Value = Settings.UseSsl;
             PollIntervalSecondsProperty.Value = Settings.PollIntervalSeconds;
+
+            ParentScenesProperty.Value = "[]";
+            ChildScenesProperty.Value = "[]";
+
             Commit();
 
-            // TEST LOG:
-            // Confirms settings before protocol startup.
             Log("JellyfishLighting - Connect settings loaded: useSsl=" + Settings.UseSsl +
                 " pollInterval=" + Settings.PollIntervalSeconds);
 
             base.Connect();
-
-            // CHANGED:
-            // Removed Connected = true here.
-            // Actual connection state is now updated in Update_UI() from Protocol.LastOnlineState.
-            //Protocol.Start();
+            Protocol.Start();
+            RefreshSceneListsFromProtocol();
         }
 
         public override void Disconnect()
