@@ -4,9 +4,8 @@
   <version ver="1.0"/>
 
   <!-- Tile: tap to toggle power, ellipsis for navigation -->
-  <tile icon="#icSun"
+  <tile icon="#icHeatingRegular"
         status="{StatusText}"
-        action="command:TogglePatternPower"
         navigation="show:MainPage"
         showinhomepage="#true"
         showinroompage="#true"/>
@@ -36,13 +35,15 @@
 
         <!-- Parent scenes list -->
         <listbutton id="ParentScenesListButtonId"
-                    label="^ParentScenesLabel"
-                    source="{ParentScenes}"
-                    itemlabel="{.name}"
-                    action="command:SelectParentScene"
-                    actionparameters="{.id},{.name}"
-                    navigation="show:ChildScenesPage"
-                    navigationparameters="{.id},{.name}"/>
+            label="^ParentScenesLabel"
+            source="{ParentScenes}"
+            itemlabel="{.name}"
+            action="command:SelectParentScene"
+            actionparameters="{.id},{.name}"
+            navigation="show:ChildScenesPage"
+            navigationparameters="{.id},{.name}"
+            visible="{HasParentScenes}"
+            enabled="{HasParentScenes}"/>
 
         <button id="RefreshButtonId" label="^RefreshNowLabel" action="command:RefreshNow"/>
         <button id="GetPatternsButtonId" label="^GetPatternsAndZonesLabel" action="command:GetPatternsAndZones"/>
@@ -70,7 +71,7 @@
                     source="{ChildScenes}"
                     itemlabel="{.name}"
                     action="command:RunChildScene"
-                    actionparameters="{$ParentSceneId},{$ParentSceneName},{.id},{.name}"/>
+                    actionparameters="{.id},{.name}"/>
 
         <toggle id="ChildPagePowerToggleId"
                 label="^PowerToggleLabel"

@@ -16,7 +16,7 @@
             // Default remains false, but transport ignores SSL now.
             UseSsl = false;
 
-            PollIntervalSeconds = 60;
+            PollIntervalSeconds = 180;
         }
 
         public void Save(bool useSsl, int pollIntervalSeconds)

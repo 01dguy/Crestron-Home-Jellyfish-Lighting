@@ -3,8 +3,8 @@
     "DeviceSupport": {},
     "DeviceSupport2": [],
     "GeneralInformation": {
-      "DeviceType": "Exterior Lighting",
-      "Manufacturer": "JellyFish Lighting",
+      "DeviceType": "Lighting",
+      "Manufacturer": "Jellyfish Lighting",
       "BaseModel": "LAN Controller",
       "VersionDate": "2026-03-06 00:00:00",
       "DriverVersion": "1.0.0",

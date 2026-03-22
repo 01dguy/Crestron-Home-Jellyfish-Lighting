@@ -5,6 +5,7 @@ using Crestron.RAD.Common.Interfaces;
 using Crestron.RAD.Common.Interfaces.ExtensionDevice;
 using Crestron.RAD.DeviceTypes.ExtensionDevice;
 
+
 namespace JellyfishLighting.ExtensionDriver
 {
     public class Jellyfish_Lighting : AExtensionDevice, ICloudConnected
@@ -24,6 +25,7 @@ namespace JellyfishLighting.ExtensionDriver
 
         private const string ParentScenesKey = "ParentScenes";
         private const string ChildScenesKey = "ChildScenes";
+        private const string HasParentScenesKey = "HasParentScenes"; //Validation helper for UI - true if ParentScenes list is non-empty
         private const string SelectedParentSceneIdKey = "SelectedParentSceneId";
         private const string SelectedParentSceneNameKey = "SelectedParentSceneName";
 
@@ -40,8 +42,9 @@ namespace JellyfishLighting.ExtensionDriver
 
         private PropertyValue<bool> PowerStateProperty;
 
-        private PropertyValue<string> ParentScenesProperty;
-        private PropertyValue<string> ChildScenesProperty;
+        private ObjectList ParentScenesProperty;
+        private ObjectList ChildScenesProperty;
+        private PropertyValue<bool> HasParentScenesProperty; //Validation helper for UI - true if ParentScenes list is non-empty
         private PropertyValue<string> SelectedParentSceneIdProperty;
         private PropertyValue<string> SelectedParentSceneNameProperty;
 
@@ -50,6 +53,7 @@ namespace JellyfishLighting.ExtensionDriver
 
         private PropertyValue<bool> UseSslProperty;
         private PropertyValue<int> PollIntervalSecondsProperty;
+        private ClassDefinition SceneListItemClass;
 
         [ProgrammableEvent]
         public event EventHandler SceneUpdated;
@@ -102,8 +106,16 @@ namespace JellyfishLighting.ExtensionDriver
 
             PowerStateProperty = CreateProperty<bool>(new PropertyDefinition(PowerStateKey, null, DevicePropertyType.Boolean));
 
-            ParentScenesProperty = CreateProperty<string>(new PropertyDefinition(ParentScenesKey, null, DevicePropertyType.String));
-            ChildScenesProperty = CreateProperty<string>(new PropertyDefinition(ChildScenesKey, null, DevicePropertyType.String));
+            SceneListItemClass = CreateClassDefinition("SceneListItem");
+            SceneListItemClass.AddProperty(new PropertyDefinition("id", string.Empty, DevicePropertyType.String));
+            SceneListItemClass.AddProperty(new PropertyDefinition("name", string.Empty, DevicePropertyType.String));
+
+            ParentScenesProperty = CreateList(
+                new PropertyDefinition(ParentScenesKey, string.Empty, DevicePropertyType.ObjectList, SceneListItemClass));
+
+            ChildScenesProperty = CreateList(
+                new PropertyDefinition(ChildScenesKey, string.Empty, DevicePropertyType.ObjectList, SceneListItemClass));
+
             SelectedParentSceneIdProperty = CreateProperty<string>(new PropertyDefinition(SelectedParentSceneIdKey, null, DevicePropertyType.String));
             SelectedParentSceneNameProperty = CreateProperty<string>(new PropertyDefinition(SelectedParentSceneNameKey, null, DevicePropertyType.String));
 
@@ -113,8 +125,11 @@ namespace JellyfishLighting.ExtensionDriver
             UseSslProperty = CreateProperty<bool>(new PropertyDefinition(UseSslKey, null, DevicePropertyType.Boolean));
             PollIntervalSecondsProperty = CreateProperty<int>(new PropertyDefinition(PollIntervalSecondsKey, null, DevicePropertyType.Int32));
 
-            ParentScenesProperty.Value = "[]";
-            ChildScenesProperty.Value = "[]";
+            HasParentScenesProperty = CreateProperty<bool>(new PropertyDefinition(HasParentScenesKey, null, DevicePropertyType.Boolean));
+            HasParentScenesProperty.Value = false;
+
+            ParentScenesProperty.Clear();
+            ChildScenesProperty.Clear();
 
             Commit();
         }
@@ -133,7 +148,7 @@ namespace JellyfishLighting.ExtensionDriver
 
             PowerStateProperty.Value = string.Equals(
                 Protocol.LastPowerStatus,
-                "LED power is ON",
+                "Jellyfish is ON",
                 StringComparison.OrdinalIgnoreCase);
 
             Connected = Protocol.LastOnlineState;
@@ -145,7 +160,6 @@ namespace JellyfishLighting.ExtensionDriver
         public void RefreshNow()
         {
             Protocol?.PollNow();
-            RefreshSceneListsFromProtocol();
         }
 
         public void TriggerSceneUpdatedEvent()
@@ -173,12 +187,10 @@ namespace JellyfishLighting.ExtensionDriver
 
                 case "RefreshNow":
                     Protocol?.PollNow();
-                    RefreshSceneListsFromProtocol();
                     break;
 
                 case "GetPatternsAndZones":
                     Protocol?.PollNow();
-                    RefreshSceneListsFromProtocol();
                     break;
 
                 case "TogglePatternPower":
@@ -296,7 +308,7 @@ namespace JellyfishLighting.ExtensionDriver
 
             var isOn = string.Equals(
                 Protocol.LastPowerStatus,
-                "LED power is ON",
+                "Jellyfish is ON",
                 StringComparison.OrdinalIgnoreCase);
 
             if (isOn)
@@ -313,6 +325,7 @@ namespace JellyfishLighting.ExtensionDriver
             // Expected: [parentId, parentName]
             if (parameters == null || parameters.Length < 1)
             {
+                Log("JellyfishLighting - SelectParentScene called without parameters.");
                 return;
             }
 
@@ -322,24 +335,48 @@ namespace JellyfishLighting.ExtensionDriver
             SelectedParentSceneIdProperty.Value = parentId;
             SelectedParentSceneNameProperty.Value = parentName;
 
-            ChildScenesProperty.Value = GetChildScenesJsonOrEmpty(parentId);
+            RebuildChildScenesObjectList(parentId);
+
+            Log("JellyfishLighting - Scene category selected: id='" + parentId + "' name='" + parentName + "'.");
 
             Commit();
         }
 
+        //private void RunChildScene(string[] parameters)
+        //{
+        //    // Expected: [parentId,parentName,childId,childName]
+        //    if (Protocol == null || parameters == null || parameters.Length < 3)
+        //    {
+        //        return;
+        //    }
+
+        //    var parentId = !string.IsNullOrEmpty(parameters[0])
+        //        ? parameters[0]
+        //        : SelectedParentSceneIdProperty.Value;
+
+        //    var childName = parameters.Length > 3 ? parameters[3] : parameters[2];
+
+        //    if (string.IsNullOrEmpty(parentId) || string.IsNullOrEmpty(childName))
+        //    {
+        //        SetUserStatus("Select a valid parent and child scene.", Protocol.LastOnlineState);
+        //        return;
+        //    }
+
+        //    PatternPathProperty.Value = parentId + "/" + childName;
+        //    RunSelectedPattern();
+        //}
+
+        //NEW
         private void RunChildScene(string[] parameters)
         {
-            // Expected: [parentId,parentName,childId,childName]
-            if (Protocol == null || parameters == null || parameters.Length < 3)
+            // Expected now: [childId, childName]
+            if (Protocol == null || parameters == null || parameters.Length < 1)
             {
                 return;
             }
 
-            var parentId = !string.IsNullOrEmpty(parameters[0])
-                ? parameters[0]
-                : SelectedParentSceneIdProperty.Value;
-
-            var childName = parameters.Length > 3 ? parameters[3] : parameters[2];
+            var parentId = SelectedParentSceneIdProperty.Value ?? string.Empty;
+            var childName = parameters.Length > 1 ? parameters[1] : parameters[0];
 
             if (string.IsNullOrEmpty(parentId) || string.IsNullOrEmpty(childName))
             {
@@ -361,11 +398,30 @@ namespace JellyfishLighting.ExtensionDriver
             var zones = ParseZones(SelectedZonesProperty.Value);
             if (zones.Length == 0)
             {
+                // Fallback: if UI zones are blank, use currently known controller zones.
+                zones = Protocol.GetKnownZonesSnapshot();
+                if (zones.Length > 0)
+                {
+                    SelectedZonesProperty.Value = string.Join(",", zones);
+                }
+            }
+
+            if (zones.Length == 0)
+            {
                 SetUserStatus("Select at least one zone. Use comma-separated names (example: Front Roof,Garage).", Protocol.LastOnlineState);
                 return;
             }
 
             var patternPath = (PatternPathProperty.Value ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(patternPath))
+            {
+                patternPath = TryAutoSelectFirstScenePath();
+                if (!string.IsNullOrEmpty(patternPath))
+                {
+                    PatternPathProperty.Value = patternPath;
+                }
+            }
+
             if (string.IsNullOrEmpty(patternPath))
             {
                 SetUserStatus("Select a scene before turning on.", Protocol.LastOnlineState);
@@ -375,37 +431,185 @@ namespace JellyfishLighting.ExtensionDriver
             Protocol.RunPattern(patternPath, zones, 1);
         }
 
-        private void RefreshSceneListsFromProtocol()
-        {
-            ParentScenesProperty.Value = GetParentScenesJsonOrEmpty();
-
-            var parentId = SelectedParentSceneIdProperty.Value ?? string.Empty;
-            ChildScenesProperty.Value = string.IsNullOrEmpty(parentId)
-                ? "[]"
-                : GetChildScenesJsonOrEmpty(parentId);
-        }
-
-        private string GetParentScenesJsonOrEmpty()
+        // This method tries to auto-select the first available scene if none is currently selected.
+        private string TryAutoSelectFirstScenePath()
         {
             if (Protocol == null)
             {
-                return "[]";
+                return string.Empty;
             }
 
-            var result = Protocol.GetParentScenesAsUiListJson();
-            return string.IsNullOrEmpty(result) ? "[]" : result;
+            var parentNames = Protocol.GetParentSceneNames();
+            if (parentNames == null || parentNames.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            var parentId = parentNames[0];
+            if (string.IsNullOrEmpty(parentId))
+            {
+                return string.Empty;
+            }
+
+            SelectedParentSceneIdProperty.Value = parentId;
+            SelectedParentSceneNameProperty.Value = parentId;
+
+            var childNames = Protocol.GetChildSceneNames(parentId);
+            if (childNames == null || childNames.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            var childId = childNames[0];
+            if (string.IsNullOrEmpty(childId))
+            {
+                return string.Empty;
+            }
+
+            RebuildSceneObjectList(ChildScenesProperty, childNames);
+            return parentId + "/" + childId;
         }
 
-        private string GetChildScenesJsonOrEmpty(string parentId)
+        //private static string ExtractFirstListId(string listJson)
+        //{
+        //    if (string.IsNullOrEmpty(listJson))
+        //    {
+        //        return string.Empty;
+        //    }
+
+        //    var match = System.Text.RegularExpressions.Regex.Match(
+        //        listJson,
+        //        "\"id\"\\s*:\\s*\"(?<id>[^\"]+)\"",
+        //        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        //    return match.Success ? match.Groups["id"].Value : string.Empty;
+        //}
+
+        private void RefreshSceneListsFromProtocol()
         {
+            if (Protocol == null)
+            {
+                ParentScenesProperty.Clear();
+                ChildScenesProperty.Clear();
+                HasParentScenesProperty.Value = false;
+                return;
+            }
+
+            var parentNames = Protocol.GetParentSceneNames();
+            RebuildSceneObjectList(ParentScenesProperty, parentNames);
+
+            HasParentScenesProperty.Value = parentNames != null && parentNames.Length > 0;
+
+            var parentId = SelectedParentSceneIdProperty.Value ?? string.Empty;
+            var childNames = string.IsNullOrEmpty(parentId)
+                ? new string[0]
+                : Protocol.GetChildSceneNames(parentId);
+
+            RebuildSceneObjectList(ChildScenesProperty, childNames);
+
+            if (!HasParentScenesProperty.Value)
+            {
+                Log("JellyfishLighting - No scene categories available yet.");
+            }
+        }
+
+        //This does the initial build of ObjectList for scene patterns
+        public void RebuildSceneListsAndCommit()
+        {
+            RefreshSceneListsFromProtocol();
+            Commit();
+        }
+
+        //NEW
+        private void RebuildSceneObjectList(ObjectList targetList, string[] names)
+        {
+            targetList.Clear();
+
+            if (names == null || names.Length == 0)
+            {
+                return;
+            }
+
+            for (var i = 0; i < names.Length; i++)
+            {
+                var sceneName = names[i];
+                if (string.IsNullOrEmpty(sceneName))
+                {
+                    continue;
+                }
+
+                ObjectValue item = CreateObject(SceneListItemClass);
+                item.GetValue<string>("id").Value = sceneName;
+                item.GetValue<string>("name").Value = sceneName;
+
+                targetList.AddObject(item);
+            }
+        }
+
+        //KEEP
+        private void RebuildParentScenesObjectList()
+        {
+            ParentScenesProperty.Clear();
+
+            if (Protocol == null)
+            {
+                return;
+            }
+
+            var names = Protocol.GetParentSceneNames();
+            if (names == null || names.Length == 0)
+            {
+                return;
+            }
+
+            for (var i = 0; i < names.Length; i++)
+            {
+                var sceneName = names[i];
+                if (string.IsNullOrEmpty(sceneName))
+                {
+                    continue;
+                }
+
+                ObjectValue item = CreateObject(SceneListItemClass);
+                item.GetValue<string>("id").Value = sceneName;
+                item.GetValue<string>("name").Value = sceneName;
+
+                ParentScenesProperty.AddObject(item);
+            }
+        }
+
+        //KEEP
+        private void RebuildChildScenesObjectList(string parentId)
+        {
+            ChildScenesProperty.Clear();
+
             if (Protocol == null || string.IsNullOrEmpty(parentId))
             {
-                return "[]";
+                return;
             }
 
-            var result = Protocol.GetChildScenesAsUiListJson(parentId);
-            return string.IsNullOrEmpty(result) ? "[]" : result;
+            var names = Protocol.GetChildSceneNames(parentId);
+            if (names == null || names.Length == 0)
+            {
+                return;
+            }
+
+            for (var i = 0; i < names.Length; i++)
+            {
+                var sceneName = names[i];
+                if (string.IsNullOrEmpty(sceneName))
+                {
+                    continue;
+                }
+
+                ObjectValue item = CreateObject(SceneListItemClass);
+                item.GetValue<string>("id").Value = sceneName;
+                item.GetValue<string>("name").Value = sceneName;
+
+                ChildScenesProperty.AddObject(item);
+            }
         }
+
 
         private void SetUserStatus(string message, bool isOnline)
         {
@@ -455,8 +659,9 @@ namespace JellyfishLighting.ExtensionDriver
             UseSslProperty.Value = Settings.UseSsl;
             PollIntervalSecondsProperty.Value = Settings.PollIntervalSeconds;
 
-            ParentScenesProperty.Value = "[]";
-            ChildScenesProperty.Value = "[]";
+            ParentScenesProperty.Clear();
+            ChildScenesProperty.Clear();
+            HasParentScenesProperty.Value = false;
 
             Commit();
 
