@@ -1,91 +1,121 @@
 # JellyFish Lighting Crestron Home Driver
 
-This project is a JellyFish Crestron Home extension scaffold aligned to the LAN WebSocket API (`toCtlrGet`, `toCtlrSet`, `fromCtlr`).
+This project is a Crestron Home extension driver for JellyFish Lighting controllers using the LAN WebSocket API (`toCtlrGet`, `toCtlrSet`, `fromCtlr`).
 
-## Current implemented behaviors
+## Current implemented behavior
 
-- WebSocket transport scaffold with configurable host/port and `ws`/`wss` URI generation.
-- Transport now exposes an inbound frame callback (`ReceiveJsonFromSocket(...)` -> `InboundJsonReceived`) so received websocket text frames can be routed directly into protocol parsing.
-- Poll flow sends:
+### Transport / connection
+- Real WebSocket transport using `ClientWebSocket`
+- Configurable controller host and port
+- Current implementation forces non-secure `ws://`
+- Automatic reconnect/backoff behavior
+- Inbound WebSocket text frames are routed directly into protocol parsing
+
+### Polling / synchronization
+- Automatic polling is enabled
+- Poll requests:
   - `patternFileList`
   - `zones`
-- Inbound `fromCtlr` handling for:
-  - `patternFileList` (folder/pattern counts)
-  - `zones` (cached known zone names)
-  - `patternFileData` (caches `jsonData`, parses speed/brightness)
-  - `runPattern` acks (including per-zone `id` responses)
-  - `ledPower` updates
-- Outbound command helpers:
-  - Basic `runPattern` (on/off)
-  - Advanced `runPattern` with full stringified data payload
-  - Pattern file data request
-- Pattern data cache + update helpers:
-  - `SetBrightness(...)`
-  - `SetSpeed(...)`
-- Status aggregation separates the latest power status from command/ack status to reduce rapid status churn in UI.
+- Default poll interval is **180 seconds**
+- User-adjustable poll interval is exposed in the Settings UI
+- Poll interval is clamped to a minimum of **10 seconds**
 
-## Compatibility and observed firmware behavior
+### Inbound controller handling
+- `patternFileList`
+  - caches available scene/category paths
+  - counts folders/patterns for status
+- `zones`
+  - caches known zone names
+- `runPattern`
+  - tracks active scene/pattern file
+  - updates power state from `runPattern.state`
+  - handles acknowledgements identified by either `id` or `zoneName`
+- `ledPower`
+  - updates power feedback when present
 
-Validated against firmware version **4.1.13** and captured controller traffic:
+### Outbound controller handling
+- Basic `runPattern` command for on/off using selected file + zones
+- Cached-state restore after reconnect
+- Power-off behavior targets known zones when available
 
-- Transport compatibility: `ws://` observed and validated as working in captures (non-secure WebSocket).
-- Device/zone behavior: discovered zones included `Garage Door` and `Speaker Soffit`.
-- Pattern behavior: `Thanksgiving/Thanksgiving paint` payloads parse correctly.
-- Acknowledgement behavior: `runPattern` responses may identify target zones by either `id` or `zoneName`.
-- Realtime update behavior: repeated advanced `runPattern` updates can include escaped nested JSON in `data`, including `runData.speed` and `runData.brightness`.
+### Crestron Home UI
+- Main tile with status text and toggle behavior
+- Parent scene category selection
+- Child scene selection
+- Parent/child scene selections concatenate into a full pattern path such as:
+  - `Christmas/Mint`
+- Selected child scene can be run from the UI and used for normal on/off workflow
+- Settings page exposes:
+  - SSL toggle (currently transport still forces `ws://`)
+  - poll interval
 
-## Required integration attributes and defaults
+## Observed / validated behavior
 
-The integration should always be configured with these values before connect:
+Validated against real controller traffic and in-system testing:
 
-- `ControllerHost` (**required**): JellyFish controller hostname or IP.
-- `ControllerPort` (**required**): WebSocket port on the controller.
-- `UseSsl` (**required**): security mode selector that controls URI scheme.
+- Connection over `ws://<controller>:9000`
+- Zone discovery from `zones`
+- Pattern/category discovery from `patternFileList`
+- Scene execution using parent/child path selection
+- Power on/off behavior using selected pattern + selected zones
+- `runPattern` acknowledgements may identify the target using:
+  - `id`
+  - `zoneName`
 
-Recommended defaults (unless the site requires an override):
+## Required configuration
 
-- URI scheme: **`ws://`** (`UseSsl = false`)
-- Port: **`9000`**
+Before connecting, configure:
 
-Use `wss://` (`UseSsl = true`) only when the controller/site deployment explicitly supports secure WebSocket termination.
+- `ControllerHost`
+  - JellyFish controller hostname or IP
+- `ControllerPort`
+  - WebSocket port on the controller
+- `UseSsl`
+  - currently exposed in UI, but transport presently forces non-secure `ws://`
 
-## Troubleshooting quick matrix
+## Recommended defaults
 
-| Symptom | Likely cause | What to verify/fix |
-|---|---|---|
-| Connect fails immediately | Host/port/scheme mismatch | Confirm `ControllerHost`, `ControllerPort`, and `UseSsl`; default to `ws://<host>:80` first. |
-| Connected but no frames | Polling/request flow not triggered or capture source issue | Trigger `GetPatternsAndZones` / refresh; verify controller is emitting `fromCtlr` frames. |
-| Malformed data status/errors | Escaped JSON payload in advanced `runPattern` data not preserved | Validate string escaping in `data` and replay captured frames through parser workflow below. |
-| Zone mismatch (action applies to wrong/zero zones) | `id` vs `zoneName` mapping mismatch or stale zone cache | Refresh zones, then compare outgoing selected zones with incoming `runPattern` ack identifiers. |
+- `ControllerPort = 9000`
+- `UseSsl = false`
+- `PollIntervalSeconds = 180`
 
-## Sample capture + replay workflow
+For sites where pattern/zone data changes rarely, a longer poll interval such as **300 seconds** may reduce unnecessary list refresh activity.
 
-Use `websocat` to capture real frames and replay them through the parser helper.
+## Known limitations / current quirks
 
-1. Capture a session to a log file (example):
+- Transport currently forces `ws://` even if `UseSsl` is enabled in settings
+- Scene-selection UX is functional but may still benefit from UI flow cleanup
+- Pattern/zones list handling is now much more stable, but the UI flow has been iterated heavily and should continue to be tested with real processors and mobile clients
 
-   ```bash
-   websocat -t ws://<controller-host>:9000 | tee /tmp/jellyfish_ws.log
-   ```
+## Troubleshooting
 
-2. (Optional) Keep only JSON frame lines if your capture includes non-frame noise.
+### No connection
+Check:
+- `ControllerHost`
+- `ControllerPort`
+- controller reachable on `ws://<host>:9000`
 
-3. Replay captured frames through the helper:
+### Connected but no scenes appear
+Check:
+- `patternFileList` is being returned by the controller
+- the driver receives `fromCtlr` frames
+- a manual refresh / `GetPatternsAndZones` succeeds
 
-   ```bash
-   python3 tools/replay_websocat_log.py /tmp/jellyfish_ws.log
-   ```
+### Power toggle works but desired scene does not run
+Check:
+- selected parent and child scene together form the expected path
+- selected zones are valid
+- controller sends `runPattern` acknowledgement after selection
 
-4. Review emitted parse/status output to confirm:
-   - `fromCtlr` messages are parsed.
-   - `zones`, `patternFileList`, and `runPattern` events are recognized.
-   - advanced `runPattern.data` values produce expected speed/brightness extraction.
+### Scene list or tile disappears in user UI
+This has historically been tied to listbutton timing and scene-list readiness. If it reappears, inspect:
+- parent scene list population timing
+- main page listbutton bindings
+- scene list readiness gating
 
-## Notes
+## Useful test / capture workflow
 
-- Real socket connect/read/write remains TODO in transport; protocol and payload handling are now aligned with captured real responses.
-- Metadata default communication port is set to `9000` for current controller/API Explorer usage.
+Capture traffic from the controller:
 
-## Next production step
-
-Implement actual websocket I/O in `Jellyfish_Lighting_Transport` and invoke `ReceiveJsonFromSocket(...)` for each inbound text frame.
+```bash
+websocat -t ws://<controller-host>:9000 | tee /tmp/jellyfish_ws.log
