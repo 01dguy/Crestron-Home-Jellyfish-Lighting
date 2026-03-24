@@ -98,7 +98,7 @@
       <controls>
         <subheader id="PollingSubheader" label="^PollingSubheaderLabel"/>
         <controlgroup>
-          <textentry id="HostId" label="^HostLabel" value="{ControllerHost}"/>
+          <textentry id="HostId" label="^HostLabel" value="{ControllerHostDisplay}"/>
           <textentry id="PollIntervalId" label="^PollIntervalLabel" value="{PollIntervalSeconds}" numericinputonly="#true"/>
         </controlgroup>
         <button id="SaveButtonId" label="^SaveButtonName" action="command:SaveSettings"/>
