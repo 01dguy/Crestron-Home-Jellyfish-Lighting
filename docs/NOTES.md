@@ -22,3 +22,5 @@
 - In `IncludeInPkg/UiDefinitions/UiDefinition.xml`, prefer hiding controls with `visible="#false"` instead of deleting them.
 - Rationale: in Crestron Home, `UiDefinition.xml` acts as both UI layout and a functional contract surface for the driver.
 - Practical guidance: when iterating UI, keep existing IDs/bindings where possible and disable visibility first to reduce integration regressions.
+- Brittleness warning: invalid/missing/mismatched bindings can cause the entire tile/UI surface to disappear even while transport/protocol communication is still working.
+- Regression note: binding a UI field directly to `ControllerHost` caused a UI regression; use a dedicated UI display property (for example `ControllerHostDisplay`) and map it to protocol/user-attribute values in code.

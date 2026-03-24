@@ -180,6 +180,8 @@ That means:
 * command keys must match exactly
 * UI bindings must match exactly
 * if UI behavior is broken, always verify the XML bindings against the driver properties first
+* treat changes as high-risk: a bad binding can make the tile/UI disappear even when backend communication is healthy
+* prefer compatibility edits (hide with `visible="#false"`, preserve IDs/keys, introduce new display properties rather than overloading existing attribute names)
 
 This is a critical rule for this project.
 
