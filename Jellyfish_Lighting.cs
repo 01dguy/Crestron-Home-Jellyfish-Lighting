@@ -31,6 +31,7 @@ namespace JellyfishLighting.ExtensionDriver
 
         private const string PatternPathKey = "PatternPath";
         private const string SelectedZonesKey = "SelectedZones";
+        private const string ControllerHostKey = "ControllerHost";
 
         private const string UseSslKey = "UseSsl";
         private const string PollIntervalSecondsKey = "PollIntervalSeconds";
@@ -50,6 +51,7 @@ namespace JellyfishLighting.ExtensionDriver
 
         private PropertyValue<string> PatternPathProperty;
         private PropertyValue<string> SelectedZonesProperty;
+        private PropertyValue<string> ControllerHostProperty;
 
         private PropertyValue<bool> UseSslProperty;
         private PropertyValue<int> PollIntervalSecondsProperty;
@@ -121,6 +123,7 @@ namespace JellyfishLighting.ExtensionDriver
 
             PatternPathProperty = CreateProperty<string>(new PropertyDefinition(PatternPathKey, null, DevicePropertyType.String));
             SelectedZonesProperty = CreateProperty<string>(new PropertyDefinition(SelectedZonesKey, null, DevicePropertyType.String));
+            ControllerHostProperty = CreateProperty<string>(new PropertyDefinition(ControllerHostKey, null, DevicePropertyType.String));
 
             UseSslProperty = CreateProperty<bool>(new PropertyDefinition(UseSslKey, null, DevicePropertyType.Boolean));
             PollIntervalSecondsProperty = CreateProperty<int>(new PropertyDefinition(PollIntervalSecondsKey, null, DevicePropertyType.Int32));
@@ -172,6 +175,7 @@ namespace JellyfishLighting.ExtensionDriver
             switch (command)
             {
                 case "ShowSettings":
+                    ControllerHostProperty.Value = Protocol != null ? Protocol.GetControllerHost() : string.Empty;
                     UseSslProperty.Value = Settings.UseSsl;
                     PollIntervalSecondsProperty.Value = Settings.PollIntervalSeconds;
                     break;
@@ -241,6 +245,14 @@ namespace JellyfishLighting.ExtensionDriver
 
                 case SelectedZonesKey:
                     SelectedZonesProperty.Value = ToText(value);
+                    break;
+
+                case ControllerHostKey:
+                    ControllerHostProperty.Value = ToText(value);
+                    if (Protocol != null)
+                    {
+                        Protocol.SetUserAttribute(ControllerHostKey, ControllerHostProperty.Value);
+                    }
                     break;
 
                 case SelectedParentSceneIdKey:
@@ -658,6 +670,7 @@ namespace JellyfishLighting.ExtensionDriver
 
             UseSslProperty.Value = Settings.UseSsl;
             PollIntervalSecondsProperty.Value = Settings.PollIntervalSeconds;
+            ControllerHostProperty.Value = Protocol.GetControllerHost();
 
             ParentScenesProperty.Clear();
             ChildScenesProperty.Clear();

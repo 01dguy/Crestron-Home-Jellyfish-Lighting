@@ -144,6 +144,14 @@ namespace JellyfishLighting.ExtensionDriver
             ApplyTransportConfiguration();
         }
 
+        public string GetControllerHost()
+        {
+            lock (_stateLock)
+            {
+                return ControllerHost ?? string.Empty;
+            }
+        }
+
         public void SetPowerState(int state)
         {
             if (state != 0 && state != 1)
