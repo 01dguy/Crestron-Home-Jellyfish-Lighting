@@ -21,8 +21,7 @@
 
         <textdisplay id="SceneTextId"
                      title="^SceneLabel"
-                     line1label="{ActiveScene}"
-                     line2label="{IsOnline}"/>
+                     line1label="{ActiveScene}"/>
 
         <subheader id="PowerSubheader" label="^PowerSubheaderLabel"/>
 
@@ -33,7 +32,7 @@
 
         <subheader id="ScenesSubheader" label="^ScenesSubheaderLabel"/>
 
-        <!-- Parent scenes list -->
+        <!-- Parent scenes listbutton -->
         <listbutton id="ParentScenesListButtonId"
             label="^ParentScenesLabel"
             source="{ParentScenes}"
@@ -45,11 +44,19 @@
             visible="{HasParentScenes}"
             enabled="{HasParentScenes}"/>
 
-        <button id="RefreshButtonId" label="^RefreshNowLabel" action="command:RefreshNow"/>
-        <button id="GetPatternsButtonId" label="^GetPatternsAndZonesLabel" action="command:GetPatternsAndZones"/>
+        <button id="RefreshButtonId" 
+                label="^RefreshNowLabel" 
+                action="command:RefreshNow"
+                visible="#false"/>
+        
+        <button id="GetPatternsButtonId" 
+                label="^GetPatternsAndZonesLabel"
+                icon="icRepeat"
+                action="command:GetPatternsAndZones"/>
 
         <button id="SettingsButtonId"
                 label="^ButtonSettingsLabel"
+                icon="icFineTuneRegular"
                 navigation="show:SettingsPage"
                 action="command:ShowSettings"/>
       </controls>
@@ -76,11 +83,13 @@
         <toggle id="ChildPagePowerToggleId"
                 label="^PowerToggleLabel"
                 secondarylabel="{StatusText}"
-                value="{PowerState}"/>
+                value="{PowerState}"
+                visible="#false"/>
 
         <button id="BackToMainButtonId"
                 label="^BackToMainLabel"
-                navigation="show:MainPage"/>
+                navigation="show:MainPage"
+                visible="#false"/>
       </controls>
     </layout>
 

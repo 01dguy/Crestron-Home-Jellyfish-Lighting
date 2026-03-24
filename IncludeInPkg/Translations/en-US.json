@@ -8,17 +8,17 @@
   "ButtonSettingsLabel": "Settings",
   "SaveButtonName": "Save",
   "RefreshNowLabel": "Refresh now",
-  "GetPatternsAndZonesLabel": "Get patterns + zones",
+  "GetPatternsAndZonesLabel": "Refresh Patterns + Zones",
   "HostLabel": "Jellyfish Controller IP",
 
-  "PowerSubheaderLabel": "Power",
+  "PowerSubheaderLabel": "Power Control",
   "PowerToggleLabel": "Power",
 
-  "ScenesSubheaderLabel": "Scenes",
-  "ParentScenesLabel": "Choose scene category",
+  "ScenesSubheaderLabel": "Scene Selection",
+  "ParentScenesLabel": "Choose Lighting Theme",
   "ChildScenesPageTitle": "Scene Variations",
-  "SelectedParentLabel": "Selected Category",
-  "ChildScenesLabel": "Choose scene",
+  "SelectedParentLabel": "Current Active Scene",
+  "ChildScenesLabel": "Choose Theme Scene",
   "BackToMainLabel": "Back",
 
   "SettingsNoteLabel": "Settings apply to controller communication and polling."
