@@ -97,10 +97,8 @@
     <layout id="SettingsPage" title="^SettingsPageTitle">
       <controls>
         <subheader id="PollingSubheader" label="^PollingSubheaderLabel"/>
-        <controlgroup>
-          <textentry id="HostId" label="^HostLabel" value="{ControllerHostDisplay}"/>
-          <textentry id="PollIntervalId" label="^PollIntervalLabel" value="{PollIntervalSeconds}" numericinputonly="#true"/>
-        </controlgroup>
+        <textdisplay id="HostId" title="^HostLabel" line1label="{ControllerHostDisplay}"/>
+        <textentry id="PollIntervalId" label="^PollIntervalLabel" value="{PollIntervalSeconds}" numericinputonly="#true"/>
         <button id="SaveButtonId" label="^SaveButtonName" action="command:SaveSettings"/>
       </controls>
     </layout>

@@ -3,7 +3,7 @@
     "DeviceSupport": {},
     "DeviceSupport2": [],
     "GeneralInformation": {
-      "DeviceType": "Lighting",
+      "DeviceType": "Light",
       "Manufacturer": "Jellyfish Lighting",
       "BaseModel": "LAN Controller",
       "VersionDate": "2026-03-06 00:00:00",
@@ -28,7 +28,7 @@
         "JellyFish Exterior Lighting"
       ],
       "SupportedModels": [
-        "LAN WebSocket API"
+        "LAN Controller"
       ]
     },
     "Api": {
@@ -68,20 +68,7 @@
         "Data": {
           "DataType": "String",
           "Mask": "",
-          "DefaultValue": "192.168.4.15"
-        }
-      },
-      {
-        "TypeName": "Custom",
-        "ParameterId": "ControllerPort",
-        "Label": "Controller Port",
-        "Description": "WebSocket port on JellyFish controller",
-        "Persistent": true,
-        "RequiredForConnection": "Before",
-        "Data": {
-          "DataType": "String",
-          "Mask": "",
-          "DefaultValue": "9000"
+          "DefaultValue": ""
         }
       }
     ],

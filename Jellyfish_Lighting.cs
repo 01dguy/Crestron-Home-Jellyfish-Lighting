@@ -354,30 +354,6 @@ namespace JellyfishLighting.ExtensionDriver
             Commit();
         }
 
-        //private void RunChildScene(string[] parameters)
-        //{
-        //    // Expected: [parentId,parentName,childId,childName]
-        //    if (Protocol == null || parameters == null || parameters.Length < 3)
-        //    {
-        //        return;
-        //    }
-
-        //    var parentId = !string.IsNullOrEmpty(parameters[0])
-        //        ? parameters[0]
-        //        : SelectedParentSceneIdProperty.Value;
-
-        //    var childName = parameters.Length > 3 ? parameters[3] : parameters[2];
-
-        //    if (string.IsNullOrEmpty(parentId) || string.IsNullOrEmpty(childName))
-        //    {
-        //        SetUserStatus("Select a valid parent and child scene.", Protocol.LastOnlineState);
-        //        return;
-        //    }
-
-        //    PatternPathProperty.Value = parentId + "/" + childName;
-        //    RunSelectedPattern();
-        //}
-
         //NEW
         private void RunChildScene(string[] parameters)
         {
@@ -481,21 +457,6 @@ namespace JellyfishLighting.ExtensionDriver
             RebuildSceneObjectList(ChildScenesProperty, childNames);
             return parentId + "/" + childId;
         }
-
-        //private static string ExtractFirstListId(string listJson)
-        //{
-        //    if (string.IsNullOrEmpty(listJson))
-        //    {
-        //        return string.Empty;
-        //    }
-
-        //    var match = System.Text.RegularExpressions.Regex.Match(
-        //        listJson,
-        //        "\"id\"\\s*:\\s*\"(?<id>[^\"]+)\"",
-        //        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-        //    return match.Success ? match.Groups["id"].Value : string.Empty;
-        //}
 
         private void RefreshSceneListsFromProtocol()
         {
