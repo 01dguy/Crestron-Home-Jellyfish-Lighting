@@ -209,11 +209,13 @@ namespace JellyfishLighting.ExtensionDriver
 
             TransportLayer.SendJson(BuildGetPatternListCommand());
             TransportLayer.SendJson(BuildGetZoneListCommand());
+            TransportLayer.SendJson(BuildGetLedPowerCommand());
+            TransportLayer.SendJson(BuildGetRunPatternCommand());
             MarkOutboundCommandSent();
 
             lock (_stateLock)
             {
-                LastAckStatus = "Polling: requested patternFileList + zones";
+                LastAckStatus = "Polling: requested patternFileList + zones + ledPower + runPattern";
                 UpdateLastStatus();
             }
 
@@ -587,6 +589,16 @@ namespace JellyfishLighting.ExtensionDriver
         public static string BuildGetZoneListCommand()
         {
             return "{\"cmd\":\"toCtlrGet\",\"get\":[[\"zones\"]]}";
+        }
+
+        public static string BuildGetLedPowerCommand()
+        {
+            return "{\"cmd\":\"toCtlrGet\",\"get\":[[\"ledPower\"]]}";
+        }
+
+        public static string BuildGetRunPatternCommand()
+        {
+            return "{\"cmd\":\"toCtlrGet\",\"get\":[[\"runPattern\"]]}";
         }
 
         public static string BuildRunPatternBasicCommand(string filePath, string[] zoneNames, int state)
