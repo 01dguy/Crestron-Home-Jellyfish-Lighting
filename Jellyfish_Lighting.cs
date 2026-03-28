@@ -151,7 +151,7 @@ namespace JellyfishLighting.ExtensionDriver
 
             PowerStateProperty.Value = string.Equals(
                 Protocol.LastPowerStatus,
-                "Jellyfish is ON",
+                "Lights On",
                 StringComparison.OrdinalIgnoreCase);
 
             Connected = Protocol.LastOnlineState;
@@ -320,7 +320,7 @@ namespace JellyfishLighting.ExtensionDriver
 
             var isOn = string.Equals(
                 Protocol.LastPowerStatus,
-                "Jellyfish is ON",
+                "Lights On",
                 StringComparison.OrdinalIgnoreCase);
 
             if (isOn)

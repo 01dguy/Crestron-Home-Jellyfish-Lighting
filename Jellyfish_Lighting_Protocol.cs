@@ -308,7 +308,7 @@ namespace JellyfishLighting.ExtensionDriver
             var ledPower = ExtractBool(json, "ledPower");
             if (ledPower != null)
             {
-                newPowerStatus = (bool)ledPower ? "Jellyfish is ON" : "Jellyfish is OFF";
+                newPowerStatus = (bool)ledPower ? "Lights On" : "Lights Off";
             }
 
             if (json.IndexOf("\"patternFileList\"", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -333,11 +333,6 @@ namespace JellyfishLighting.ExtensionDriver
                 newZoneSummary = (newKnownZones == null || newKnownZones.Length == 0)
                     ? "Zones: none"
                     : "Zones: " + string.Join(", ", newKnownZones);
-
-                if (newAckStatus == null)
-                {
-                    newAckStatus = "Zone list received";
-                }
             }
 
             bool sceneChanged;
@@ -447,7 +442,7 @@ namespace JellyfishLighting.ExtensionDriver
                 return;
             }
 
-            var restoreState = string.Equals(powerStatus, "Jellyfish is OFF", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+            var restoreState = string.Equals(powerStatus, "Lights Off", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
 
             if (!string.IsNullOrEmpty(cachedData) && zoneNames != null && zoneNames.Length > 0)
             {
@@ -565,19 +560,26 @@ namespace JellyfishLighting.ExtensionDriver
 
         private void UpdateLastStatus()
         {
+            var ackForStatus = LastAckStatus;
+            if (!string.IsNullOrEmpty(ackForStatus) &&
+                ackForStatus.StartsWith("RunPattern ack:", StringComparison.OrdinalIgnoreCase))
+            {
+                ackForStatus = string.Empty;
+            }
+
             if (!string.IsNullOrEmpty(LastPowerStatus))
             {
                 LastStatus = LastPowerStatus;
-                if (!string.IsNullOrEmpty(LastAckStatus))
+                if (!string.IsNullOrEmpty(ackForStatus))
                 {
-                    LastStatus += " | " + LastAckStatus;
+                    LastStatus += " | " + ackForStatus;
                 }
                 return;
             }
 
-            if (!string.IsNullOrEmpty(LastAckStatus))
+            if (!string.IsNullOrEmpty(ackForStatus))
             {
-                LastStatus = LastAckStatus;
+                LastStatus = ackForStatus;
             }
         }
 
