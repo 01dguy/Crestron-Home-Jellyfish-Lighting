@@ -283,6 +283,12 @@ namespace JellyfishLighting.ExtensionDriver
                     newPatternFile = runPatternFile;
                 }
 
+                var runPatternState = ExtractInt(json, "state");
+                if (runPatternState == 0 || runPatternState == 1)
+                {
+                    newPowerStatus = runPatternState == 1 ? "Lights On" : "Lights Off";
+                }
+
                 var runPatternData = ExtractString(json, "data");
                 if (!string.IsNullOrEmpty(runPatternData))
                 {
