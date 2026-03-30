@@ -57,21 +57,7 @@
         "DeviceId": 0
       }
     },
-    "UserAttributes": [
-      {
-        "TypeName": "Custom",
-        "ParameterId": "ControllerHost",
-        "Label": "Controller Host",
-        "Description": "Required: JellyFish controller hostname or IP for websocket connection",
-        "Persistent": true,
-        "RequiredForConnection": "Before",
-        "Data": {
-          "DataType": "String",
-          "Mask": "",
-          "DefaultValue": ""
-        }
-      }
-    ],
+    "UserAttributes": [],
     "Dependencies": []
   }
 }
