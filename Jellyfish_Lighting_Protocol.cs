@@ -899,17 +899,61 @@ namespace JellyfishLighting.ExtensionDriver
 
         public override void SetUserAttribute(string attributeId, string attributeValue)
         {
-            switch (attributeId)
+            if (string.IsNullOrEmpty(attributeId))
             {
-                case "ControllerHost":
+                return;
+            }
+
+            var key = attributeId.Trim();
+            var normalized = key.ToLowerInvariant();
+            var updatedConnectionAttribute = false;
+
+            switch (normalized)
+            {
+                case "controllerhost":
+                case "rad:controllerhost":
+                case "host":
+                case "hostname":
+                case "address":
+                case "ip":
+                case "ipaddress":
                     ControllerHost = attributeValue ?? string.Empty;
+                    updatedConnectionAttribute = true;
                     break;
-                case "ControllerPort":
+
+                case "controllerport":
+                case "rad:controllerport":
+                case "port":
+                case "ipport":
                     ControllerPort = ToPort(attributeValue);
+                    updatedConnectionAttribute = true;
+                    break;
+
+                default:
+                    Log("JellyfishLighting - SetUserAttribute ignored: " + key + "=" + (attributeValue ?? string.Empty));
                     break;
             }
 
+            if (!updatedConnectionAttribute)
+            {
+                return;
+            }
+
             ApplyTransportConfiguration();
+
+            bool shouldStart;
+            lock (_stateLock)
+            {
+                shouldStart = HasStarted;
+            }
+
+            if (shouldStart &&
+                !string.IsNullOrEmpty(ControllerHost) &&
+                !TransportLayer.IsSocketConnected)
+            {
+                Log("JellyfishLighting - SetUserAttribute applied host/port, attempting transport start.");
+                TransportLayer.Start();
+            }
         }
     }
 }
