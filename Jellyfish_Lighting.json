@@ -57,7 +57,21 @@
         "DeviceId": 0
       }
     },
-    "UserAttributes": [],
+    "UserAttributes": [
+      {
+        "TypeName": "Custom",
+        "ParameterId": "ControllerHost",
+        "Label": "Controller Host (Install)",
+        "Description": "Required at install: enter JellyFish controller hostname or IP for websocket connection. This is the primary host value used by the driver.",
+        "Persistent": true,
+        "RequiredForConnection": "Before",
+        "Data": {
+          "DataType": "String",
+          "Mask": "",
+          "DefaultValue": ""
+        }
+      }
+    ],
     "Dependencies": []
   }
 }
