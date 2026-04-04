@@ -282,7 +282,7 @@ namespace JellyfishLighting.ExtensionDriver
                     true,
                     CancellationToken.None).Wait();
 
-                Log("JellyfishLighting TX: " + message);
+                SafeLogPayload("JellyfishLighting TX: ", message);
             }
             catch (Exception ex)
             {
@@ -458,8 +458,22 @@ namespace JellyfishLighting.ExtensionDriver
                 return;
             }
 
-            Log("JellyfishLighting RX: " + json);
+            SafeLogPayload("JellyfishLighting RX: ", json);
             InboundJsonReceived?.Invoke(json);
+        }
+
+        private void SafeLogPayload(string prefix, string payload)
+        {
+            try
+            {
+                // Some logging paths interpret braces as format tokens; escape to keep JSON safe.
+                var safePayload = (payload ?? string.Empty).Replace("{", "{{").Replace("}", "}}");
+                Log((prefix ?? string.Empty) + safePayload);
+            }
+            catch
+            {
+                // Never allow logging failures to impact transport behavior.
+            }
         }
     }
 }
