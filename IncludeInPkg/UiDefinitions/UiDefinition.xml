@@ -40,7 +40,6 @@
             action="command:SelectParentScene"
             actionparameters="{.id},{.name}"
             navigation="show:ChildScenesPage"
-            navigationparameters="{.id},{.name}"
             visible="{HasParentScenes}"
             enabled="{HasParentScenes}"/>
 
@@ -65,12 +64,11 @@
     <!-- Child scenes page -->
     <layout id="ChildScenesPage"
             title="^ChildScenesPageTitle"
-            subtitle="{$ParentSceneName}"
-            inputparameters="$ParentSceneId,$ParentSceneName">
+            subtitle="{SelectedParentSceneName}">
       <controls>
         <textdisplay id="SelectedParentTextId"
                      title="^SelectedParentLabel"
-                     line1label="{$ParentSceneName}"
+                     line1label="{SelectedParentSceneName}"
                      line2label="{ActiveScene}"/>
 
         <listbutton id="ChildScenesListButtonId"
