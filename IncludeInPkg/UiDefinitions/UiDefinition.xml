@@ -68,7 +68,6 @@
       <controls>
         <textdisplay id="SelectedParentTextId"
                      title="^SelectedParentLabel"
-                     line1label="{SelectedParentSceneName}"
                      line2label="{ActiveScene}"/>
 
         <listbutton id="ChildScenesListButtonId"

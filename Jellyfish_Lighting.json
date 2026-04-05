@@ -6,7 +6,7 @@
       "DeviceType": "Light",
       "Manufacturer": "Jellyfish Lighting",
       "BaseModel": "LAN Controller",
-      "VersionDate": "2026-04-01 00:00:00",
+      "VersionDate": "2026-04-04 00:00:00",
       "DriverVersion": "1.0.2",
       "SdkVersion": "16.00.000",
       "Description": "Crestron Home extension driver Jellyfish Lighting",
@@ -62,7 +62,7 @@
         "TypeName": "Custom",
         "ParameterId": "ControllerHost",
         "Label": "Controller Host (Install)",
-        "Description": "Required at install: enter JellyFish controller hostname or IP for websocket connection. This is the primary host value used by the driver.",
+        "Description": "Required at install: enter JellyFish controller hostname or IP for websocket connection.",
         "Persistent": true,
         "RequiredForConnection": "Before",
         "Data": {
