@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading;
 using Crestron.RAD.Common.Attributes.Programming;
 using Crestron.RAD.Common.Enums;
 using Crestron.RAD.Common.Interfaces;
@@ -26,6 +27,7 @@ namespace JellyfishLighting.ExtensionDriver
         private const string ParentScenesKey = "ParentScenes";
         private const string ChildScenesKey = "ChildScenes";
         private const string HasParentScenesKey = "HasParentScenes"; //Validation helper for UI - true if ParentScenes list is non-empty
+        private const string HasChildScenesKey = "HasChildScenes";
         private const string SelectedParentSceneIdKey = "SelectedParentSceneId";
         private const string SelectedParentSceneNameKey = "SelectedParentSceneName";
 
@@ -46,6 +48,7 @@ namespace JellyfishLighting.ExtensionDriver
         private ObjectList ParentScenesProperty;
         private ObjectList ChildScenesProperty;
         private PropertyValue<bool> HasParentScenesProperty; //Validation helper for UI - true if ParentScenes list is non-empty
+        private PropertyValue<bool> HasChildScenesProperty;
         private PropertyValue<string> SelectedParentSceneIdProperty;
         private PropertyValue<string> SelectedParentSceneNameProperty;
 
@@ -130,6 +133,8 @@ namespace JellyfishLighting.ExtensionDriver
 
             HasParentScenesProperty = CreateProperty<bool>(new PropertyDefinition(HasParentScenesKey, null, DevicePropertyType.Boolean));
             HasParentScenesProperty.Value = false;
+            HasChildScenesProperty = CreateProperty<bool>(new PropertyDefinition(HasChildScenesKey, null, DevicePropertyType.Boolean));
+            HasChildScenesProperty.Value = false;
 
             ParentScenesProperty.Clear();
             ChildScenesProperty.Clear();
@@ -346,8 +351,14 @@ namespace JellyfishLighting.ExtensionDriver
 
             SelectedParentSceneIdProperty.Value = parentId;
             SelectedParentSceneNameProperty.Value = parentName;
+            HasChildScenesProperty.Value = false;
 
             RebuildChildScenesObjectList(parentId);
+
+            // Touchpanels can navigate before list rendering fully settles.
+            // Keep one-tap navigation flow, but briefly delay child-list readiness.
+            Thread.Sleep(120);
+            HasChildScenesProperty.Value = Protocol != null && Protocol.GetChildSceneNames(parentId).Length > 0;
 
             Log("JellyfishLighting - Scene category selected: id='" + parentId + "' name='" + parentName + "'.");
 
@@ -465,6 +476,7 @@ namespace JellyfishLighting.ExtensionDriver
                 ParentScenesProperty.Clear();
                 ChildScenesProperty.Clear();
                 HasParentScenesProperty.Value = false;
+                HasChildScenesProperty.Value = false;
                 return;
             }
 
@@ -479,6 +491,7 @@ namespace JellyfishLighting.ExtensionDriver
                 : Protocol.GetChildSceneNames(parentId);
 
             RebuildSceneObjectList(ChildScenesProperty, childNames);
+            HasChildScenesProperty.Value = childNames != null && childNames.Length > 0;
 
             if (!HasParentScenesProperty.Value)
             {
@@ -636,6 +649,7 @@ namespace JellyfishLighting.ExtensionDriver
             ParentScenesProperty.Clear();
             ChildScenesProperty.Clear();
             HasParentScenesProperty.Value = false;
+            HasChildScenesProperty.Value = false;
 
             Commit();
 

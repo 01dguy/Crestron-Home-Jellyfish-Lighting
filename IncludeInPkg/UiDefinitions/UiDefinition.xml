@@ -75,7 +75,9 @@
                     source="{ChildScenes}"
                     itemlabel="{.name}"
                     action="command:RunChildScene"
-                    actionparameters="{.id},{.name}"/>
+                    actionparameters="{.id},{.name}"
+                    visible="{HasChildScenes}"
+                    enabled="{HasChildScenes}"/>
 
         <toggle id="ChildPagePowerToggleId"
                 label="^PowerToggleLabel"
