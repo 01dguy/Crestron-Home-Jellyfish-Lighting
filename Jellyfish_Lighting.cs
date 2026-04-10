@@ -170,6 +170,18 @@ namespace JellyfishLighting.ExtensionDriver
             Protocol?.PollNow();
         }
 
+        [ProgrammableOperation("^PowerOnLabel")]
+        public void PowerOn()
+        {
+            RunSelectedPattern();
+        }
+
+        [ProgrammableOperation("^PowerOffLabel")]
+        public void PowerOff()
+        {
+            Protocol?.SetPowerState(0);
+        }
+
         public void TriggerSceneUpdatedEvent()
         {
             SceneUpdated?.Invoke(this, EventArgs.Empty);
@@ -204,6 +216,10 @@ namespace JellyfishLighting.ExtensionDriver
 
                 case "TogglePatternPower":
                     TogglePatternPower();
+                    break;
+
+                case "PowerOn":
+                    RunSelectedPattern();
                     break;
 
                 case "SelectParentScene":

@@ -13,6 +13,8 @@
 
   "PowerSubheaderLabel": "Power Control",
   "PowerToggleLabel": "Power",
+  "PowerOnLabel": "Power On",
+  "PowerOffLabel": "Power Off",
 
   "ScenesSubheaderLabel": "Scene Selection",
   "ParentScenesLabel": "Choose Lighting Theme",
